@@ -1,7 +1,6 @@
 package gb28181
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +11,7 @@ import (
 	"github.com/pion/rtp/v2"
 	"go.uber.org/zap"
 	. "m7s.live/engine/v4"
+	. "m7s.live/engine/v4/codec"
 	. "m7s.live/engine/v4/track"
 	"m7s.live/engine/v4/util"
 	"m7s.live/plugin/gb28181/v4/utils"
@@ -28,6 +28,7 @@ type GBPublisher struct {
 	dumpFile    *os.File
 	dumpPrint   io.Writer
 	lastReceive time.Time
+	reorder     util.RTPReorder[*rtp.Packet]
 }
 
 func (p *GBPublisher) PrintDump(s string) {
@@ -113,10 +114,25 @@ func (p *GBPublisher) PushVideo(pts uint32, dts uint32, payload []byte) {
 		case utils.StreamTypeH265:
 			p.VideoTrack = NewH265(p.Publisher.Stream)
 		default:
-			return
+			//推测编码类型
+			var maybe264 H264NALUType
+			maybe264 = maybe264.Parse(payload[4])
+			switch maybe264 {
+			case NALU_Non_IDR_Picture, NALU_IDR_Picture, NALU_SEI, NALU_SPS, NALU_PPS, NALU_Access_Unit_Delimiter:
+				p.VideoTrack = NewH264(p.Publisher.Stream)
+			default:
+				p.VideoTrack = NewH265(p.Publisher.Stream)
+			}
 		}
 	}
-	p.PrintDump(fmt.Sprintf("<td>pts:%d dts:%d data: % 2X</td>", pts, dts, payload[:10]))
+	if len(payload) > 10 {
+		p.PrintDump(fmt.Sprintf("<td>pts:%d dts:%d data: % 2X</td>", pts, dts, payload[:10]))
+	} else {
+		p.PrintDump(fmt.Sprintf("<td>pts:%d dts:%d data: % 2X</td>", pts, dts, payload))
+	}
+	if dts == 0 {
+		dts = pts
+	}
 	p.VideoTrack.WriteAnnexB(pts, dts, payload)
 }
 func (p *GBPublisher) PushAudio(ts uint32, payload []byte) {
@@ -140,55 +156,28 @@ func (p *GBPublisher) PushAudio(ts uint32, payload []byte) {
 			return
 		}
 	}
-	p.AudioTrack.WriteAVCC(ts, payload)
+	p.AudioTrack.WriteAVCC(ts/90, payload)
 }
 
+// 解析rtp封装 https://www.ietf.org/rfc/rfc2250.txt
 func (p *GBPublisher) PushPS(rtp *rtp.Packet) {
-	originRtp := *rtp
-	if conf.UdpCacheSize > 0 && !conf.IsMediaNetworkTCP() {
-		//序号小于第一个包的丢弃,rtp包序号达到65535后会从0开始，所以这里需要判断一下
-		if rtp.SequenceNumber < p.lastSeq && p.lastSeq-rtp.SequenceNumber < utils.MaxRtpDiff {
-			return
-		}
-		p.udpCache.Push(*rtp)
-		rtpTmp, _ := p.udpCache.Pop()
-		rtp = &rtpTmp
-	}
-	ps := rtp.Payload
-	if p.lastSeq != 0 {
-		// rtp序号不连续，丢弃PS
-		if p.lastSeq+1 != rtp.SequenceNumber {
-			if conf.UdpCacheSize > 0 && !conf.IsMediaNetworkTCP() {
-				if p.udpCache.Len() < conf.UdpCacheSize {
-					p.udpCache.Push(*rtp)
-					return
-				} else {
-					p.udpCache.Empty()
-					rtp = &originRtp // 还原rtp包，而不是使用缓存中，避免rtp序号断裂
-				}
-			}
-			p.parser.Reset()
-		}
-	}
-	p.lastSeq = rtp.SequenceNumber
 	if p.parser == nil {
-		p.parser = new(utils.DecPSPackage)
+		p.parser = utils.NewDecPSPackage(p)
 	}
-	if len(ps) >= 4 && binary.BigEndian.Uint32(ps) == utils.StartCodePS {
-		if p.parser.Len() > 0 {
-			p.parser.Skip(4)
-			p.PrintDump("</td></tr>")
-			p.PrintDump("<tr>")
-			p.parser.Read(rtp.Timestamp, p)
-			p.PrintDump("</tr>")
-			p.PrintDump("<tr  class=gray><td colspan=12>")
-			p.parser.Reset()
+	if conf.IsMediaNetworkTCP() {
+		p.parser.Feed(rtp.Payload)
+		p.lastSeq = rtp.SequenceNumber
+	} else {
+		for rtp = p.reorder.Push(rtp.SequenceNumber, rtp); rtp != nil; rtp = p.reorder.Pop() {
+			if rtp.SequenceNumber != p.lastSeq+1 {
+				p.parser.Drop()
+			}
+			p.parser.Feed(rtp.Payload)
+			p.lastSeq = rtp.SequenceNumber
 		}
-		p.parser.Write(ps)
-	} else if p.parser.Len() > 0 {
-		p.parser.Write(ps)
 	}
 }
+
 func (p *GBPublisher) Replay(f *os.File) (err error) {
 	var rtpPacket rtp.Packet
 	defer f.Close()
@@ -202,7 +191,6 @@ func (p *GBPublisher) Replay(f *os.File) (err error) {
 		p.PrintDump("<table>")
 		defer p.PrintDump("</table>")
 	}
-	p.PrintDump("<tr class=gray><td colspan=12>")
 	var t uint16
 	for l := make([]byte, 6); !p.IsClosed(); time.Sleep(time.Millisecond * time.Duration(t)) {
 		_, err = f.Read(l)
@@ -233,16 +221,19 @@ func (p *GBPublisher) ListenUDP() (port uint16, err error) {
 	mediaAddr, _ := net.ResolveUDPAddr("udp", addr)
 	conn, err := net.ListenUDP("udp", mediaAddr)
 	if err != nil {
+		conf.udpPorts.Recycle(port)
 		plugin.Error("listen media server udp err", zap.String("addr", addr), zap.Error(err))
 		return 0, err
 	}
 	p.SetIO(conn)
 	go func() {
+		defer conn.Close()
 		bufUDP := make([]byte, networkBuffer)
 		plugin.Info("Media udp server start.", zap.Uint16("port", port))
 		defer plugin.Info("Media udp server stop", zap.Uint16("port", port))
 		defer conf.udpPorts.Recycle(port)
 		dumpLen := make([]byte, 6)
+		conn.SetReadDeadline(time.Now().Add(time.Second * 10))
 		for n, _, err := conn.ReadFromUDP(bufUDP); err == nil; n, _, err = conn.ReadFromUDP(bufUDP) {
 			ps := bufUDP[:n]
 			if err := rtpPacket.Unmarshal(ps); err != nil {
@@ -260,7 +251,37 @@ func (p *GBPublisher) ListenUDP() (port uint16, err error) {
 				p.dumpFile.Write(ps)
 			}
 			p.PushPS(&rtpPacket)
+			conn.SetReadDeadline(time.Now().Add(time.Second * 10))
 		}
+	}()
+	return
+}
+
+func (p *GBPublisher) ListenTCP() (port uint16, err error) {
+	port, err = conf.tcpPorts.GetPort()
+	if err != nil {
+		return
+	}
+	addr := fmt.Sprintf(":%d", port)
+	mediaAddr, _ := net.ResolveTCPAddr("tcp", addr)
+	listen, err := net.ListenTCP("tcp", mediaAddr)
+	if err != nil {
+		defer conf.tcpPorts.Recycle(port)
+		plugin.Error("listen media server tcp err", zap.String("addr", addr), zap.Error(err))
+		return 0, err
+	}
+	go func() {
+		plugin.Info("Media tcp server start.", zap.Uint16("port", port))
+		defer conf.tcpPorts.Recycle(port)
+		defer plugin.Info("Media tcp server stop", zap.Uint16("port", port))
+		conn, err := listen.Accept()
+		listen.Close()
+		p.SetIO(conn)
+		if err != nil {
+			plugin.Error("Accept err=", zap.Error(err))
+			return
+		}
+		processTcpMediaConn(conf, conn)
 	}()
 	return
 }

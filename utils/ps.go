@@ -4,9 +4,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 )
 
-//
 const (
 	UDPTransfer        int = 0
 	TCPTransferActive  int = 1
@@ -28,7 +28,7 @@ const (
 	StartCodeMAP       = 0x000001bc
 	StartCodeVideo     = 0x000001e0
 	StartCodeAudio     = 0x000001c0
-	HaiKangCode        = 0x000001bd
+	PrivateStreamCode  = 0x000001bd
 	MEPGProgramEndCode = 0x000001b9
 
 	RTPHeaderLength    int = 12
@@ -119,11 +119,20 @@ type DecPSPackage struct {
 	VideoStreamType uint32
 	AudioStreamType uint32
 	IOBuffer
-	Payload []byte
-	PTS     uint32
-	DTS     uint32
+	Payload     []byte
+	videoBuffer []byte
+	audioBuffer []byte
+	PTS         uint32
+	DTS         uint32
+	Pusher
 }
 
+func NewDecPSPackage(p Pusher) *DecPSPackage {
+	p.PrintDump("<tr><td>")
+	return &DecPSPackage{
+		Pusher: p,
+	}
+}
 func (dec *DecPSPackage) clean() {
 	dec.systemClockReferenceBase = 0
 	dec.systemClockReferenceExtension = 0
@@ -141,113 +150,126 @@ func (dec *DecPSPackage) ReadPayload() (payload []byte, err error) {
 	return dec.ReadN(int(payloadlen))
 }
 
-//read the buffer and push video or audio
-func (dec *DecPSPackage) Read(ts uint32, pusher Pusher) error {
-	dec.clean()
-	dec.PTS = ts
-	pusher.PrintDump(fmt.Sprintf("<td>%d</td>", ts))
-	if err := dec.Skip(9); err != nil {
-		return err
-	}
+// Drop 由于丢包引起的必须丢弃的数据
+func (dec *DecPSPackage) Drop() {
+	dec.Reset()
+	dec.videoBuffer = nil
+	dec.audioBuffer = nil
+	dec.Payload = nil
+}
 
-	psl, err := dec.ReadByte()
-	if err != nil {
-		return err
-	}
-	psl &= 0x07
-	if err = dec.Skip(int(psl)); err != nil {
-		return err
-	}
-	var video []byte
-	var nextStartCode uint32
-	pusher.PrintDump("<td>")
-loop:
-	for err == nil {
-		if nextStartCode, err = dec.Uint32(); err != nil {
-			break
+func (dec *DecPSPackage) Feed(ps []byte) (err error) {
+	if ps[0] == 0 && ps[1] == 0 && ps[2] == 1 {
+		defer dec.Write(ps)
+		if dec.Len() >= 4 {
+			//说明需要处理PS包，处理完后，清空缓存
+			defer dec.Reset()
+		} else {
+			return
 		}
-		switch nextStartCode {
+	} else {
+		// 说明是中间数据，直接写入缓存，否则数据不合法需要丢弃
+		if dec.Len() > 0 {
+			dec.Write(ps)
+		}
+		return nil
+	}
+	for dec.Len() >= 4 {
+		code, _ := dec.Uint32()
+		// println("code:", code)
+		switch code {
+		case StartCodePS:
+			dec.PrintDump("</td></tr><tr><td>")
+			if len(dec.audioBuffer) > 0 {
+				dec.PushAudio(dec.PTS, dec.audioBuffer)
+				dec.audioBuffer = nil
+			}
+			if err := dec.Skip(9); err != nil {
+				return err
+			}
+			psl, err := dec.ReadByte()
+			if err != nil {
+				return err
+			}
+			psl &= 0x07
+			if err = dec.Skip(int(psl)); err != nil {
+				return err
+			}
 		case StartCodeSYS:
-			pusher.PrintDump("[sys]")
+			dec.PrintDump("</td><td>[sys]")
 			dec.ReadPayload()
-			//err = dec.decSystemHeader()
 		case StartCodeMAP:
-			err = dec.decProgramStreamMap()
-			pusher.PrintDump("[map]")
+			dec.decProgramStreamMap()
+			dec.PrintDump("</td><td>[map]")
 		case StartCodeVideo:
+			if dec.videoBuffer == nil {
+				dec.PrintDump("</td><td>")
+			}
 			if err = dec.decPESPacket(); err == nil {
-				// if len(video) == 0 {
-				// 	if dec.PTS == 0 {
-				// 		dec.PTS = ts
-				// 	}
-				// 	// if dec.DTS == 0 {
-				// 	// 	dec.DTS = dec.PTS
-				// 	// }
-				// }
-				video = append(video, dec.Payload...)
+				if dec.Payload[0] == 0 && dec.Payload[1] == 0 && dec.Payload[2] == 0 && dec.Payload[3] == 1 {
+					if len(dec.videoBuffer) > 0 {
+						dec.PushVideo(dec.PTS, dec.DTS, dec.videoBuffer)
+						dec.videoBuffer = nil
+					}
+				}
+				dec.videoBuffer = append(dec.videoBuffer, dec.Payload...)
 			} else {
 				fmt.Println("video", err)
 			}
-			pusher.PrintDump("[video]")
+			dec.PrintDump("[video]")
 		case StartCodeAudio:
+			if dec.audioBuffer == nil {
+				dec.PrintDump("</td><td>")
+			}
 			if err = dec.decPESPacket(); err == nil {
-				ts := ts / 90
-				if dec.PTS != 0 {
-					ts = dec.PTS / 90
-				}
-				pusher.PushAudio(ts, dec.Payload)
-				pusher.PrintDump("[audio]")
+				dec.audioBuffer = append(dec.audioBuffer, dec.Payload...)
+				dec.PrintDump("[audio]")
 			} else {
 				fmt.Println("audio", err)
 			}
-		case StartCodePS:
-			break loop
-		default:
-			pusher.PrintDump(fmt.Sprintf("[%d]", nextStartCode))
+		case PrivateStreamCode:
 			dec.ReadPayload()
+			dec.PrintDump("</td></tr><tr><td>[ac3]")
+		case MEPGProgramEndCode:
+			dec.PrintDump("</td></tr>")
+			return io.EOF
+		default:
+			fmt.Println("unknow code", code)
+			return ErrParsePakcet
 		}
-	}
-	if len(video) > 0 {
-		pusher.PrintDump("</td>")
-		pusher.PushVideo(dec.PTS, dec.DTS, video)
-		video = nil
-	}
-	if nextStartCode == StartCodePS {
-		// fmt.Println(aurora.Red("StartCodePS recursion..."), err)
-		return dec.Read(ts, pusher)
-	}
-	return err
-}
-
-/*
-func (dec *DecPSPackage) decSystemHeader() error {
-	syslens, err := dec.Uint16()
-	if err != nil {
-		return err
-	}
-	// drop rate video audio bound and lock flag
-	syslens -= 6
-	if err = dec.Skip(6); err != nil {
-		return err
-	}
-
-	// ONE WAY: do not to parse the stream  and skip the buffer
-	//br.Skip(syslen * 8)
-
-	// TWO WAY: parse every stream info
-	for syslens > 0 {
-		if nextbits, err := dec.Uint8(); err != nil {
-			return err
-		} else if (nextbits&0x80)>>7 != 1 {
-			break
-		}
-		if err = dec.Skip(2); err != nil {
-			return err
-		}
-		syslens -= 3
 	}
 	return nil
 }
+
+/*
+	func (dec *DecPSPackage) decSystemHeader() error {
+		syslens, err := dec.Uint16()
+		if err != nil {
+			return err
+		}
+		// drop rate video audio bound and lock flag
+		syslens -= 6
+		if err = dec.Skip(6); err != nil {
+			return err
+		}
+
+		// ONE WAY: do not to parse the stream  and skip the buffer
+		//br.Skip(syslen * 8)
+
+		// TWO WAY: parse every stream info
+		for syslens > 0 {
+			if nextbits, err := dec.Uint8(); err != nil {
+				return err
+			} else if (nextbits&0x80)>>7 != 1 {
+				break
+			}
+			if err = dec.Skip(2); err != nil {
+				return err
+			}
+			syslens -= 3
+		}
+		return nil
+	}
 */
 func (dec *DecPSPackage) decProgramStreamMap() error {
 	psm, err := dec.ReadPayload()
