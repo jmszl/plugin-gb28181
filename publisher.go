@@ -1,6 +1,7 @@
 package gb28181
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -163,8 +164,13 @@ func (p *GBPublisher) PushAudio(ts uint32, payload []byte) {
 			p.AudioTrack = NewAAC(p.Publisher.Stream)
 			p.WriteADTS(payload[:7])
 		default:
-			p.Error("audio type not supported yet", zap.Uint32("type", p.parser.AudioStreamType))
-			return
+			if payload[0] == 0xff && payload[1]>>4 == 0xf {
+				p.AudioTrack = NewAAC(p.Publisher.Stream)
+				p.WriteADTS(payload[:7])
+			} else {
+				p.Error("audio type not supported yet", zap.Uint32("type", p.parser.AudioStreamType))
+				return
+			}
 		}
 	} else {
 		p.AudioTrack.WriteRaw(ts, payload)
@@ -177,14 +183,17 @@ func (p *GBPublisher) PushPS(rtp *rtp.Packet) {
 		p.parser = utils.NewDecPSPackage(p)
 	}
 	if conf.IsMediaNetworkTCP() {
-		p.parser.Feed(rtp.Payload)
+		p.parser.Feed(rtp)
 		p.lastSeq = rtp.SequenceNumber
 	} else {
 		for rtp = p.reorder.Push(rtp.SequenceNumber, rtp); rtp != nil; rtp = p.reorder.Pop() {
 			if rtp.SequenceNumber != p.lastSeq+1 {
 				p.parser.Drop()
+				if p.VideoTrack != nil {
+					p.VideoTrack.SetLostFlag()
+				}
 			}
-			p.parser.Feed(rtp.Payload)
+			p.parser.Feed(rtp)
 			p.lastSeq = rtp.SequenceNumber
 		}
 	}
@@ -293,7 +302,23 @@ func (p *GBPublisher) ListenTCP() (port uint16, err error) {
 			plugin.Error("Accept err=", zap.Error(err))
 			return
 		}
-		processTcpMediaConn(conf, conn)
+		var rtpPacket rtp.Packet
+		lenBuf := make([]byte, 2)
+		defer conn.Close()
+		for err == nil {
+			if _, err = io.ReadFull(conn, lenBuf); err != nil {
+				return
+			}
+			ps := make([]byte, binary.BigEndian.Uint16(lenBuf))
+			if _, err = io.ReadFull(conn, ps); err != nil {
+				return
+			}
+			if err := rtpPacket.Unmarshal(ps); err != nil {
+				plugin.Error("gb28181 decode rtp error:", zap.Error(err))
+			} else if !p.IsClosed() {
+				p.PushPS(&rtpPacket)
+			}
+		}
 	}()
 	return
 }
