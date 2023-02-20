@@ -53,6 +53,17 @@ func (a *Authorization) getDigest(raw string) string {
 }
 
 func (c *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransaction) {
+
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Println("----------OnRegister recover----------")
+			fmt.Println(err)
+		}
+		if req != nil {
+			fmt.Printf("req: %+v", req)
+		}
+	}()
+
 	from, _ := req.From()
 
 	id := from.Address.User().String()
@@ -198,6 +209,7 @@ func (c *GB28181Config) OnMessage(req sip.Request, tx sip.ServerTransaction) {
 				plugin.Sugar().Debugf("位置自动订阅，设备[%s]成功\n", d.ID)
 			}
 		case "Catalog":
+			plugin.Sugar().Warn("DeviceID:", aurora.Red(d.ID), "收到Catalog")
 			d.UpdateChannels(temp.DeviceList)
 		case "RecordInfo":
 			d.UpdateRecord(temp.DeviceID, temp.RecordList)

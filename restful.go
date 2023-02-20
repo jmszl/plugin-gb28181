@@ -14,11 +14,11 @@ func (c *GB28181Config) API_list(w http.ResponseWriter, r *http.Request) {
 	util.ReturnJson(func() (list []*Device) {
 		Devices.Range(func(key, value interface{}) bool {
 			device := value.(*Device)
-			if time.Since(device.UpdateTime) > c.RegisterValidity {
-				Devices.Delete(key)
-			} else {
-				list = append(list, device)
-			}
+			//if time.Since(device.UpdateTime) > time.Duration(conf.RegisterValidity)*time.Second {
+			//	Devices.Delete(key)
+			//} else {
+			list = append(list, device)
+			//}
 			return true
 		})
 		return
@@ -136,6 +136,21 @@ func (c *GB28181Config) API_position(w http.ResponseWriter, r *http.Request) {
 	if v, ok := Devices.Load(id); ok {
 		d := v.(*Device)
 		w.WriteHeader(d.MobilePositionSubscribe(id, expiresInt, intervalInt))
+	} else {
+		http.NotFound(w, r)
+	}
+}
+
+func (conf *GB28181Config) API_getcatalog(w http.ResponseWriter, r *http.Request) {
+	//CORS(w, r)
+	query := r.URL.Query()
+	//设备id
+	id := query.Get("id")
+
+	if v, ok := Devices.Load(id); ok {
+		d := v.(*Device)
+		d.Catalog()
+		w.WriteHeader(200)
 	} else {
 		http.NotFound(w, r)
 	}
