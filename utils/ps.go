@@ -192,12 +192,9 @@ func (dec *DecPSPackage) Feed(rtp *rtp.Packet) (err error) {
 				return err
 			}
 			psl, err := dec.ReadByte()
-			if err != nil {
-				return err
-			}
-			psl &= 0x07
-			if err = dec.Skip(int(psl)); err != nil {
-				return err
+			if err == nil {
+				psl &= 0x07
+				dec.Skip(int(psl))
 			}
 			if len(dec.videoBuffer) > 0 {
 				dec.PushVideo(dec.vPTS, dec.vDTS, dec.videoBuffer)
@@ -311,7 +308,7 @@ func (dec *DecPSPackage) decProgramStreamMap() error {
 	return nil
 }
 
-func (dec *DecPSPackage) decPESPacket(pts *uint32,dts *uint32) error {
+func (dec *DecPSPackage) decPESPacket(pts *uint32, dts *uint32) error {
 	payload, err := dec.ReadPayload()
 
 	if len(payload) < 4 {

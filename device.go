@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/exp/maps"
 	"net/http"
 	"os"
 	"strings"
@@ -55,7 +56,6 @@ type Device struct {
 	UpdateTime      time.Time
 	LastKeepaliveAt time.Time
 	Status          string
-	Channels        []*Channel
 	sn              int
 	addr            sip.Address
 	sipIP           string //设备对应网卡的服务器ip
@@ -67,9 +67,23 @@ type Device struct {
 		CallID  string
 		Timeout time.Time
 	}
+	lastSyncTime time.Time
+	GpsTime      time.Time //gps时间
+	Longitude    string    //经度
+	Latitude     string    //纬度
 }
 
-func (config *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
+func (d *Device) MarshalJSON() ([]byte, error) {
+	type Alias Device
+	return json.Marshal(&struct {
+		Channels []*Channel
+		*Alias
+	}{
+		Channels: maps.Values(d.channelMap),
+		Alias:    (*Alias)(d),
+	})
+}
+func (c *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
 	from, _ := req.From()
 	d.addr = sip.Address{
 		DisplayName: from.DisplayName,
@@ -78,7 +92,7 @@ func (config *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
 	deviceIp := req.Source()
 	servIp := req.Recipient().Host()
 	//根据网卡ip获取对应的公网ip
-	sipIP := config.routes[servIp]
+	sipIP := c.routes[servIp]
 	//如果相等，则服务器是内网通道.海康摄像头不支持...自动获取
 	if strings.LastIndex(deviceIp, ".") != -1 && strings.LastIndex(servIp, ".") != -1 {
 		if servIp[0:strings.LastIndex(servIp, ".")] == deviceIp[0:strings.LastIndex(deviceIp, ".")] || sipIP == "" {
@@ -86,14 +100,14 @@ func (config *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
 		}
 	}
 	//如果用户配置过则使用配置的
-	if config.SipIP != "" {
-		sipIP = config.SipIP
+	if c.SipIP != "" {
+		sipIP = c.SipIP
 	} else if sipIP == "" {
 		sipIP = myip.InternalIPv4()
 	}
 	mediaIp := sipIP
-	if config.MediaIP != "" {
-		mediaIp = config.MediaIP
+	if c.MediaIP != "" {
+		mediaIp = c.MediaIP
 	}
 	plugin.Info("RecoverDevice", zap.String("id", d.ID), zap.String("deviceIp", deviceIp), zap.String("servIp", servIp), zap.String("sipIP", sipIP), zap.String("mediaIp", mediaIp))
 	d.Status = string(sip.REGISTER)
@@ -102,10 +116,9 @@ func (config *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
 	d.NetAddr = deviceIp
 	d.UpdateTime = time.Now()
 	d.channelMap = make(map[string]*Channel)
-	go d.Catalog()
 }
-func (config *GB28181Config) StoreDevice(id string, req sip.Request) {
-	var d *Device
+
+func (c *GB28181Config) StoreDevice(id string, req sip.Request) (d *Device) {
 	from, _ := req.From()
 	deviceAddr := sip.Address{
 		DisplayName: from.DisplayName,
@@ -121,7 +134,7 @@ func (config *GB28181Config) StoreDevice(id string, req sip.Request) {
 	} else {
 		servIp := req.Recipient().Host()
 		//根据网卡ip获取对应的公网ip
-		sipIP := config.routes[servIp]
+		sipIP := c.routes[servIp]
 		//如果相等，则服务器是内网通道.海康摄像头不支持...自动获取
 		if strings.LastIndex(deviceIp, ".") != -1 && strings.LastIndex(servIp, ".") != -1 {
 			if servIp[0:strings.LastIndex(servIp, ".")] == deviceIp[0:strings.LastIndex(deviceIp, ".")] || sipIP == "" {
@@ -129,14 +142,14 @@ func (config *GB28181Config) StoreDevice(id string, req sip.Request) {
 			}
 		}
 		//如果用户配置过则使用配置的
-		if config.SipIP != "" {
-			sipIP = config.SipIP
+		if c.SipIP != "" {
+			sipIP = c.SipIP
 		} else if sipIP == "" {
 			sipIP = myip.InternalIPv4()
 		}
 		mediaIp := sipIP
-		if config.MediaIP != "" {
-			mediaIp = config.MediaIP
+		if c.MediaIP != "" {
+			mediaIp = c.MediaIP
 		}
 		plugin.Info("StoreDevice", zap.String("id", id), zap.String("deviceIp", deviceIp), zap.String("servIp", servIp), zap.String("sipIP", sipIP), zap.String("mediaIp", mediaIp))
 		d = &Device{
@@ -151,17 +164,17 @@ func (config *GB28181Config) StoreDevice(id string, req sip.Request) {
 			channelMap:   make(map[string]*Channel),
 		}
 		Devices.Store(id, d)
-		SaveDevices()
-		go d.Catalog()
+		c.SaveDevices()
 	}
+	return
 }
-func ReadDevices() {
+func (c *GB28181Config) ReadDevices() {
 	if f, err := os.OpenFile("devices.json", os.O_RDONLY, 0644); err == nil {
 		defer f.Close()
 		var items []*Device
 		if err = json.NewDecoder(f).Decode(&items); err == nil {
 			for _, item := range items {
-				if time.Since(item.UpdateTime) < time.Duration(conf.RegisterValidity)*time.Second {
+				if time.Since(item.UpdateTime) < conf.RegisterValidity {
 					item.Status = "RECOVER"
 					Devices.Store(item.ID, item)
 				}
@@ -169,7 +182,7 @@ func ReadDevices() {
 		}
 	}
 }
-func SaveDevices() {
+func (c *GB28181Config) SaveDevices() {
 	var item []any
 	Devices.Range(func(key, value any) bool {
 		item = append(item, value)
@@ -183,19 +196,33 @@ func SaveDevices() {
 	}
 }
 
-func (d *Device) addChannel(channel *Channel) {
-	for _, c := range d.Channels {
-		if c.DeviceID == channel.DeviceID {
-			return
-		}
+func (d *Device) addOrUpdateChannel(channel *Channel) {
+	d.channelMutex.Lock()
+	defer d.channelMutex.Unlock()
+	channel.device = d
+	var oldLock *sync.Mutex
+	if old, ok := d.channelMap[channel.DeviceID]; ok {
+		//复制锁指针
+		oldLock = old.liveInviteLock
 	}
-	d.Channels = append(d.Channels, channel)
+	if oldLock == nil {
+		channel.liveInviteLock = &sync.Mutex{}
+	} else {
+		channel.liveInviteLock = oldLock
+	}
+	d.channelMap[channel.DeviceID] = channel
+}
+
+func (d *Device) deleteChannel(DeviceID string) {
+	d.channelMutex.Lock()
+	defer d.channelMutex.Unlock()
+	delete(d.channelMap, DeviceID)
 }
 
 func (d *Device) CheckSubStream() {
 	d.channelMutex.Lock()
 	defer d.channelMutex.Unlock()
-	for _, c := range d.Channels {
+	for _, c := range d.channelMap {
 		if s := engine.Streams.Get("sub/" + c.DeviceID); s != nil {
 			c.LiveSubSP = s.Path
 		} else {
@@ -204,42 +231,34 @@ func (d *Device) CheckSubStream() {
 	}
 }
 func (d *Device) UpdateChannels(list []*Channel) {
-	d.channelMutex.Lock()
-	defer d.channelMutex.Unlock()
+
 	for _, c := range list {
 		if _, ok := conf.Ignores[c.DeviceID]; ok {
 			continue
 		}
+		//当父设备非空且存在时、父设备节点增加通道
 		if c.ParentID != "" {
 			path := strings.Split(c.ParentID, "/")
 			parentId := path[len(path)-1]
-			if parent, ok := d.channelMap[parentId]; ok {
-				if c.DeviceID != parentId {
-					parent.Children = append(parent.Children, c)
+			if c.DeviceID != parentId {
+				if v, ok := Devices.Load(parentId); ok {
+					parent := v.(*Device)
+					parent.addOrUpdateChannel(c)
+					continue
 				}
-			} else {
-				d.addChannel(c)
 			}
-		} else {
-			d.addChannel(c)
 		}
-		if old, ok := d.channelMap[c.DeviceID]; ok {
-			c.ChannelEx = old.ChannelEx
-			if conf.PreFetchRecord {
-				n := time.Now()
-				n = time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.Local)
-				if len(c.Records) == 0 || (n.Format(TIME_LAYOUT) == c.RecordStartTime &&
-					n.Add(time.Hour*24-time.Second).Format(TIME_LAYOUT) == c.RecordEndTime) {
-					go c.QueryRecord(n.Format(TIME_LAYOUT), n.Add(time.Hour*24-time.Second).Format(TIME_LAYOUT))
-				}
+		//本设备增加通道
+		d.addOrUpdateChannel(c)
+
+		//预取和邀请
+		if conf.PreFetchRecord {
+			n := time.Now()
+			n = time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.Local)
+			if len(c.Records) == 0 || (n.Format(TIME_LAYOUT) == c.RecordStartTime &&
+				n.Add(time.Hour*24-time.Second).Format(TIME_LAYOUT) == c.RecordEndTime) {
+				go c.QueryRecord(n.Format(TIME_LAYOUT), n.Add(time.Hour*24-time.Second).Format(TIME_LAYOUT))
 			}
-			old.Copy(c)
-			c = old
-		} else {
-			c.ChannelEx = &ChannelEx{
-				device: d,
-			}
-			d.channelMap[c.DeviceID] = c
 		}
 		if conf.AutoInvite && (c.LivePublisher == nil) {
 			go c.Invite(InviteOptions{})
@@ -264,6 +283,7 @@ func (d *Device) CreateRequest(Method sip.RequestMethod) (req sip.Request) {
 
 	callId := sip.CallID(utils.RandNumString(10))
 	userAgent := sip.UserAgentHeader("Monibuca")
+	maxForwards := sip.MaxForwards(70) //增加max-forwards为默认值 70
 	cseq := sip.CSeq{
 		SeqNo:      uint32(d.sn),
 		MethodName: Method,
@@ -289,6 +309,7 @@ func (d *Device) CreateRequest(Method sip.RequestMethod) (req sip.Request) {
 			&callId,
 			&userAgent,
 			&cseq,
+			&maxForwards,
 			serverAddr.AsContactHeader(),
 		},
 		"",
@@ -351,6 +372,7 @@ func (d *Device) Subscribe() int {
 }
 
 func (d *Device) Catalog() int {
+	//os.Stdout.Write(debug.Stack())
 	request := d.CreateRequest(sip.MESSAGE)
 	expires := sip.Expires(3600)
 	d.subscriber.Timeout = time.Now().Add(time.Second * time.Duration(expires))
@@ -368,10 +390,9 @@ func (d *Device) Catalog() int {
 	return http.StatusRequestTimeout
 }
 
-func (d *Device) QueryDeviceInfo(req *sip.Request) {
+func (d *Device) QueryDeviceInfo() {
 	for i := time.Duration(5); i < 100; i++ {
 
-		plugin.Info(fmt.Sprintf("QueryDeviceInfo:%s ipaddr:%s", d.ID, d.NetAddr))
 		time.Sleep(time.Second * i)
 		request := d.CreateRequest(sip.MESSAGE)
 		contentType := sip.ContentType("Application/MANSCDP+xml")
@@ -386,10 +407,8 @@ func (d *Device) QueryDeviceInfo(req *sip.Request) {
 			// 	received, _ := via.Params.Get("received")
 			// 	d.SipIP = received.String()
 			// }
-			if response.StatusCode() != 200 {
-				plugin.Sugar().Errorf("device %s send Catalog : %d\n", d.ID, response.StatusCode())
-			} else {
-				d.Subscribe()
+			plugin.Info(fmt.Sprintf("QueryDeviceInfo:%s ipaddr:%s response code:%d", d.ID, d.NetAddr, response.StatusCode()))
+			if response.StatusCode() == 200 {
 				break
 			}
 		}
@@ -401,19 +420,19 @@ func (d *Device) SipRequestForResponse(request sip.Request) (sip.Response, error
 }
 
 // MobilePositionSubscribe 移动位置订阅
-func (d *Device) MobilePositionSubscribe(id string, expires int, interval int) (code int) {
+func (d *Device) MobilePositionSubscribe(id string, expires time.Duration, interval time.Duration) (code int) {
 	mobilePosition := d.CreateRequest(sip.SUBSCRIBE)
 	if d.subscriber.CallID != "" {
 		callId := sip.CallID(utils.RandNumString(10))
 		mobilePosition.ReplaceHeaders(callId.Name(), []sip.Header{&callId})
 	}
-	expiresHeader := sip.Expires(expires)
-	d.subscriber.Timeout = time.Now().Add(time.Second * time.Duration(expires))
+	expiresHeader := sip.Expires(expires / time.Second)
+	d.subscriber.Timeout = time.Now().Add(expires)
 	contentType := sip.ContentType("Application/MANSCDP+xml")
 	mobilePosition.AppendHeader(&contentType)
 	mobilePosition.AppendHeader(&expiresHeader)
 
-	mobilePosition.SetBody(BuildDevicePositionXML(d.sn, id, interval), true)
+	mobilePosition.SetBody(BuildDevicePositionXML(d.sn, id, int(interval/time.Second)), true)
 
 	response, err := d.SipRequestForResponse(mobilePosition)
 	if err == nil && response != nil {
@@ -431,12 +450,16 @@ func (d *Device) MobilePositionSubscribe(id string, expires int, interval int) (
 // UpdateChannelPosition 更新通道GPS坐标
 func (d *Device) UpdateChannelPosition(channelId string, gpsTime string, lng string, lat string) {
 	if c, ok := d.channelMap[channelId]; ok {
-		c.ChannelEx.GpsTime, _ = time.ParseInLocation("2006-01-02 15:04:05", gpsTime, time.Local)
+		c.ChannelEx.GpsTime = time.Now() //时间取系统收到的时间，避免设备时间和格式问题
 		c.ChannelEx.Longitude = lng
 		c.ChannelEx.Latitude = lat
 		plugin.Sugar().Debugf("更新通道[%s]坐标成功\n", c.Name)
 	} else {
-		plugin.Sugar().Debugf("更新失败，未找到通道[%s]\n", channelId)
+		//如果未找到通道，则更新到设备上
+		d.GpsTime = time.Now() //时间取系统收到的时间，避免设备时间和格式问题
+		d.Longitude = lng
+		d.Latitude = lat
+		plugin.Sugar().Debugf("未找到通道[%s]，更新设备[%s]坐标成功\n", channelId, d.ID)
 	}
 }
 
@@ -458,7 +481,7 @@ func (d *Device) UpdateChannelStatus(deviceList []*notifyMessage) {
 			d.channelOffline(v.DeviceID)
 		case "ADD":
 			plugin.Debug("收到通道新增通知")
-			channel := &Channel{
+			channel := Channel{
 				DeviceID:     v.DeviceID,
 				ParentID:     v.ParentID,
 				Name:         v.Name,
@@ -474,12 +497,11 @@ func (d *Device) UpdateChannelStatus(deviceList []*notifyMessage) {
 				Secrecy:      v.Secrecy,
 				Status:       v.Status,
 			}
-			channels := []*Channel{channel}
-			d.UpdateChannels(channels)
+			d.addOrUpdateChannel(&channel)
 		case "DEL":
 			//删除
 			plugin.Debug("收到通道删除通知")
-			d.channelOffline(v.DeviceID)
+			d.deleteChannel(v.DeviceID)
 		case "UPDATE":
 			plugin.Debug("收到通道更新通知")
 			// 更新通道

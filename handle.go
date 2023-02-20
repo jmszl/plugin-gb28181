@@ -52,15 +52,14 @@ func (a *Authorization) getDigest(raw string) string {
 	}
 }
 
-func (config *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransaction) {
+func (c *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransaction) {
 	from, _ := req.From()
 
 	id := from.Address.User().String()
-	plugin.Debug(id)
-
+	plugin.Sugar().Debugf("OnRegister: %s, %s from %s ", req.Destination(), id, req.Source())
 	passAuth := false
 	// 不需要密码情况
-	if config.Username == "" && config.Password == "" {
+	if c.Username == "" && c.Password == "" {
 		passAuth = true
 	} else {
 		// 需要密码情况 设备第一次上报，返回401和加密算法
@@ -73,7 +72,7 @@ func (config *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransactio
 			if auth.Username() == id {
 				username = id
 			} else {
-				username = config.Username
+				username = c.Username
 			}
 
 			if dc, ok := DeviceRegisterCount.LoadOrStore(id, 1); ok && dc.(int) > MaxRegisterCount {
@@ -83,7 +82,7 @@ func (config *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransactio
 			} else {
 				// 设备第二次上报，校验
 				_nonce, loaded := DeviceNonce.Load(id)
-				if loaded && auth.Verify(username, config.Password, config.Realm, _nonce.(string)) {
+				if loaded && auth.Verify(username, c.Password, c.Realm, _nonce.(string)) {
 					passAuth = true
 				} else {
 					DeviceRegisterCount.Store(id, dc.(int)+1)
@@ -92,7 +91,13 @@ func (config *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransactio
 		}
 	}
 	if passAuth {
-		config.StoreDevice(id, req)
+		var d *Device
+		if v, ok := Devices.Load(id); ok {
+			d = v.(*Device)
+			c.RecoverDevice(d, req)
+		} else {
+			d = c.StoreDevice(id, req)
+		}
 		DeviceNonce.Delete(id)
 		DeviceRegisterCount.Delete(id)
 		resp := sip.NewResponseFromRequest("", req, http.StatusOK, "OK", "")
@@ -106,12 +111,14 @@ func (config *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransactio
 			Contents:   time.Now().Format(TIME_LAYOUT),
 		})
 		_ = tx.Respond(resp)
+		//订阅设备更新
+		go d.syncChannels()
 	} else {
 		response := sip.NewResponseFromRequest("", req, http.StatusUnauthorized, "Unauthorized", "")
 		_nonce, _ := DeviceNonce.LoadOrStore(id, utils.RandNumString(32))
 		auth := fmt.Sprintf(
 			`Digest realm="%s",algorithm=%s,nonce="%s"`,
-			config.Realm,
+			c.Realm,
 			"MD5",
 			_nonce.(string),
 		)
@@ -122,18 +129,31 @@ func (config *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransactio
 		_ = tx.Respond(response)
 	}
 }
-func (config *GB28181Config) OnMessage(req sip.Request, tx sip.ServerTransaction) {
+
+// syncChannels
+// 同步设备信息、下属通道信息，包括主动查询通道信息，订阅通道变化情况
+func (d *Device) syncChannels() {
+	if time.Since(d.lastSyncTime) > 2*conf.HeartbeatInterval {
+		d.lastSyncTime = time.Now()
+		d.QueryDeviceInfo()
+		d.Catalog()
+		d.Subscribe()
+	}
+}
+
+func (c *GB28181Config) OnMessage(req sip.Request, tx sip.ServerTransaction) {
 	from, _ := req.From()
 	id := from.Address.User().String()
+	plugin.Sugar().Debugf("SIP<-OnMessage from %s : %s", req.Source(), req.String())
 	if v, ok := Devices.Load(id); ok {
 		d := v.(*Device)
 		switch d.Status {
 		case "RECOVER":
-			config.RecoverDevice(d, req)
-			return
+			c.RecoverDevice(d, req)
+			go d.syncChannels()
+			//return
 		case string(sip.REGISTER):
 			d.Status = "ONLINE"
-			//go d.QueryDeviceInfo(req)
 		}
 		d.UpdateTime = time.Now()
 		temp := &struct {
@@ -161,22 +181,22 @@ func (config *GB28181Config) OnMessage(req sip.Request, tx sip.ServerTransaction
 		case "Keepalive":
 			d.LastKeepaliveAt = time.Now()
 			//callID !="" 说明是订阅的事件类型信息
-			if d.Channels == nil {
-				go d.Catalog()
+			if d.channelMap == nil || len(d.channelMap) == 0 {
+				go d.syncChannels()
 			} else {
-				if d.subscriber.CallID != "" && d.LastKeepaliveAt.After(d.subscriber.Timeout) {
-					go d.Catalog()
-				} else {
-					for _, c := range d.Channels {
-						if config.AutoInvite &&
-							(c.LivePublisher == nil) {
-							c.Invite(InviteOptions{})
-						}
+				for _, ch := range d.channelMap {
+					if c.AutoInvite && (ch.LivePublisher == nil) {
+						ch.Invite(InviteOptions{})
 					}
 				}
-
 			}
-			d.CheckSubStream()
+			//为什么要查找子码流?
+			//d.CheckSubStream()
+			//在KeepLive 进行位置订阅的处理，如果开启了自动订阅位置，则去订阅位置
+			if c.Position.AutosubPosition && time.Since(d.GpsTime) > c.Position.Interval*2 {
+				d.MobilePositionSubscribe(d.ID, c.Position.Expires, c.Position.Interval)
+				plugin.Sugar().Debugf("位置自动订阅，设备[%s]成功\n", d.ID)
+			}
 		case "Catalog":
 			d.UpdateChannels(temp.DeviceList)
 		case "RecordInfo":
@@ -199,12 +219,12 @@ func (config *GB28181Config) OnMessage(req sip.Request, tx sip.ServerTransaction
 		tx.Respond(sip.NewResponseFromRequest("", req, http.StatusOK, "OK", body))
 	}
 }
-func (config *GB28181Config) onBye(req sip.Request, tx sip.ServerTransaction) {
+func (c *GB28181Config) OnBye(req sip.Request, tx sip.ServerTransaction) {
 	tx.Respond(sip.NewResponseFromRequest("", req, http.StatusOK, "OK", ""))
 }
 
 // OnNotify 订阅通知处理
-func (config *GB28181Config) OnNotify(req sip.Request, tx sip.ServerTransaction) {
+func (c *GB28181Config) OnNotify(req sip.Request, tx sip.ServerTransaction) {
 	from, _ := req.From()
 	id := from.Address.User().String()
 	if v, ok := Devices.Load(id); ok {

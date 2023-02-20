@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 	. "m7s.live/engine/v4"
 	. "m7s.live/engine/v4/codec"
+	"m7s.live/engine/v4/codec/mpegps"
 	"m7s.live/engine/v4/codec/mpegts"
 	. "m7s.live/engine/v4/track"
 	"m7s.live/engine/v4/util"
@@ -24,7 +25,7 @@ type GBPublisher struct {
 	InviteOptions
 	channel     *Channel
 	inviteRes   sip.Response
-	parser      *utils.DecPSPackage
+	parser      mpegps.MpegPsStream
 	lastSeq     uint16
 	udpCache    *utils.PriorityQueueRtp
 	dumpFile    *os.File
@@ -41,6 +42,7 @@ func (p *GBPublisher) PrintDump(s string) {
 
 func (p *GBPublisher) OnEvent(event any) {
 	if p.channel == nil {
+		p.parser.EsHandler = p
 		p.IO.OnEvent(event)
 		return
 	}
@@ -53,6 +55,7 @@ func (p *GBPublisher) OnEvent(event any) {
 			p.Type = "GB28181 Playback"
 			p.channel.RecordPublisher = p
 		}
+		p.parser.EsHandler = p
 		conf.publishers.Add(p.SSRC, p)
 		if err := error(nil); p.dump != "" {
 			if p.dumpFile, err = os.OpenFile(p.dump, os.O_WRONLY|os.O_CREATE, 0644); err != nil {
@@ -108,9 +111,9 @@ func (p *GBPublisher) Bye() int {
 	return int(resp.StatusCode())
 }
 
-func (p *GBPublisher) PushVideo(pts uint32, dts uint32, payload []byte) {
+func (p *GBPublisher) ReceiveVideo(es mpegps.MpegPsEsStream) {
 	if p.VideoTrack == nil {
-		switch p.parser.VideoStreamType {
+		switch es.Type {
 		case mpegts.STREAM_TYPE_H264:
 			p.VideoTrack = NewH264(p.Publisher.Stream)
 		case mpegts.STREAM_TYPE_H265:
@@ -118,7 +121,7 @@ func (p *GBPublisher) PushVideo(pts uint32, dts uint32, payload []byte) {
 		default:
 			//推测编码类型
 			var maybe264 H264NALUType
-			maybe264 = maybe264.Parse(payload[4])
+			maybe264 = maybe264.Parse(es.Buffer[4])
 			switch maybe264 {
 			case NALU_Non_IDR_Picture,
 				NALU_IDR_Picture,
@@ -133,6 +136,7 @@ func (p *GBPublisher) PushVideo(pts uint32, dts uint32, payload []byte) {
 			}
 		}
 	}
+	payload, pts, dts := es.Buffer, es.PTS, es.DTS
 	if len(payload) > 10 {
 		p.PrintDump(fmt.Sprintf("<td>pts:%d dts:%d data: % 2X</td>", pts, dts, payload[:10]))
 	} else {
@@ -141,59 +145,52 @@ func (p *GBPublisher) PushVideo(pts uint32, dts uint32, payload []byte) {
 	if dts == 0 {
 		dts = pts
 	}
-	p.VideoTrack.WriteAnnexB(pts, dts, payload)
+	// if binary.BigEndian.Uint32(payload) != 1 {
+	// 	panic("not annexb")
+	// }
+	p.WriteAnnexB(pts, dts, payload)
 }
-func (p *GBPublisher) PushAudio(ts uint32, payload []byte) {
+func (p *GBPublisher) ReceiveAudio(es mpegps.MpegPsEsStream) {
+	ts, payload := es.PTS, es.Buffer
 	if p.AudioTrack == nil {
-		switch p.parser.AudioStreamType {
+		switch es.Type {
 		case mpegts.STREAM_TYPE_G711A:
-			at := NewG711(p.Publisher.Stream, true)
-			at.Audio.SampleRate = 8000
-			at.Audio.SampleSize = 16
-			at.Channels = 1
-			at.AVCCHead = []byte{(byte(at.CodecID) << 4) | (1 << 1)}
-			p.AudioTrack = at
+			p.AudioTrack = NewG711(p.Publisher.Stream, true)
 		case mpegts.STREAM_TYPE_G711U:
-			at := NewG711(p.Publisher.Stream, false)
-			at.Audio.SampleRate = 8000
-			at.Audio.SampleSize = 16
-			at.Channels = 1
-			at.AVCCHead = []byte{(byte(at.CodecID) << 4) | (1 << 1)}
-			p.AudioTrack = at
+			p.AudioTrack = NewG711(p.Publisher.Stream, false)
 		case mpegts.STREAM_TYPE_AAC:
 			p.AudioTrack = NewAAC(p.Publisher.Stream)
-			p.WriteADTS(payload[:7])
-		default:
+			p.WriteADTS(ts, payload)
+		case 0: //推测编码类型
 			if payload[0] == 0xff && payload[1]>>4 == 0xf {
 				p.AudioTrack = NewAAC(p.Publisher.Stream)
-				p.WriteADTS(payload[:7])
-			} else {
-				p.Error("audio type not supported yet", zap.Uint32("type", p.parser.AudioStreamType))
-				return
+				p.WriteADTS(ts, payload)
 			}
+		default:
+			p.Error("audio type not supported yet", zap.Uint8("type", es.Type))
 		}
+	} else if es.Type == mpegts.STREAM_TYPE_AAC {
+		p.WriteADTS(ts, payload)
 	} else {
-		p.AudioTrack.WriteRaw(ts, payload)
+		p.WriteRaw(ts, payload)
 	}
 }
 
 // 解析rtp封装 https://www.ietf.org/rfc/rfc2250.txt
 func (p *GBPublisher) PushPS(rtp *rtp.Packet) {
-	if p.parser == nil {
-		p.parser = utils.NewDecPSPackage(p)
-	}
 	if conf.IsMediaNetworkTCP() {
-		p.parser.Feed(rtp)
+		p.parser.Feed(rtp.Payload)
 		p.lastSeq = rtp.SequenceNumber
 	} else {
 		for rtp = p.reorder.Push(rtp.SequenceNumber, rtp); rtp != nil; rtp = p.reorder.Pop() {
 			if rtp.SequenceNumber != p.lastSeq+1 {
+				fmt.Println("drop", rtp.SequenceNumber, p.lastSeq)
 				p.parser.Drop()
 				if p.VideoTrack != nil {
-					p.VideoTrack.SetLostFlag()
+					p.SetLostFlag()
 				}
 			}
-			p.parser.Feed(rtp)
+			p.parser.Feed(rtp.Payload)
 			p.lastSeq = rtp.SequenceNumber
 		}
 	}

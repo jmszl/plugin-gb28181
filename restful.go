@@ -10,11 +10,11 @@ import (
 	"m7s.live/engine/v4/util"
 )
 
-func (conf *GB28181Config) API_list(w http.ResponseWriter, r *http.Request) {
+func (c *GB28181Config) API_list(w http.ResponseWriter, r *http.Request) {
 	util.ReturnJson(func() (list []*Device) {
 		Devices.Range(func(key, value interface{}) bool {
 			device := value.(*Device)
-			if time.Since(device.UpdateTime) > time.Duration(conf.RegisterValidity)*time.Second {
+			if time.Since(device.UpdateTime) > c.RegisterValidity {
 				Devices.Delete(key)
 			} else {
 				list = append(list, device)
@@ -25,7 +25,7 @@ func (conf *GB28181Config) API_list(w http.ResponseWriter, r *http.Request) {
 	}, time.Second*5, w, r)
 }
 
-func (conf *GB28181Config) API_records(w http.ResponseWriter, r *http.Request) {
+func (c *GB28181Config) API_records(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	channel := r.URL.Query().Get("channel")
 	startTime := r.URL.Query().Get("startTime")
@@ -37,7 +37,7 @@ func (conf *GB28181Config) API_records(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (conf *GB28181Config) API_control(w http.ResponseWriter, r *http.Request) {
+func (c *GB28181Config) API_control(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	channel := r.URL.Query().Get("channel")
 	ptzcmd := r.URL.Query().Get("ptzcmd")
@@ -48,7 +48,7 @@ func (conf *GB28181Config) API_control(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (conf *GB28181Config) API_invite(w http.ResponseWriter, r *http.Request) {
+func (c *GB28181Config) API_invite(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	id := query.Get("id")
 	channel := query.Get("channel")
@@ -69,11 +69,11 @@ func (conf *GB28181Config) API_invite(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (conf *GB28181Config) API_replay(w http.ResponseWriter, r *http.Request) {
+func (c *GB28181Config) API_replay(w http.ResponseWriter, r *http.Request) {
 	dump := r.URL.Query().Get("dump")
 	printOut := r.URL.Query().Get("print")
 	if dump == "" {
-		dump = conf.DumpPath
+		dump = c.DumpPath
 	}
 	f, err := os.OpenFile(dump, os.O_RDONLY, 0644)
 	if err != nil {
@@ -102,7 +102,7 @@ func (conf *GB28181Config) API_replay(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (conf *GB28181Config) API_bye(w http.ResponseWriter, r *http.Request) {
+func (c *GB28181Config) API_bye(w http.ResponseWriter, r *http.Request) {
 	// CORS(w, r)
 	id := r.URL.Query().Get("id")
 	channel := r.URL.Query().Get("channel")
@@ -114,7 +114,7 @@ func (conf *GB28181Config) API_bye(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (conf *GB28181Config) API_position(w http.ResponseWriter, r *http.Request) {
+func (c *GB28181Config) API_position(w http.ResponseWriter, r *http.Request) {
 	//CORS(w, r)
 	query := r.URL.Query()
 	//设备id
@@ -124,8 +124,14 @@ func (conf *GB28181Config) API_position(w http.ResponseWriter, r *http.Request) 
 	//订阅间隔（单位：秒）
 	interval := query.Get("interval")
 
-	expiresInt, _ := strconv.Atoi(expires)
-	intervalInt, _ := strconv.Atoi(interval)
+	expiresInt, err := time.ParseDuration(expires)
+	if expires == "" || err != nil {
+		expiresInt = c.Position.Expires
+	}
+	intervalInt, err := time.ParseDuration(interval)
+	if interval == "" || err != nil {
+		intervalInt = c.Position.Interval
+	}
 
 	if v, ok := Devices.Load(id); ok {
 		d := v.(*Device)
@@ -133,4 +139,33 @@ func (conf *GB28181Config) API_position(w http.ResponseWriter, r *http.Request) 
 	} else {
 		http.NotFound(w, r)
 	}
+}
+
+type DevicePosition struct {
+	ID        string
+	GpsTime   time.Time //gps时间
+	Longitude string    //经度
+	Latitude  string    //纬度
+}
+
+func (c *GB28181Config) API_get_position(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	//设备id
+	id := query.Get("id")
+
+	util.ReturnJson(func() (list []*DevicePosition) {
+		if id == "" {
+			Devices.Range(func(key, value interface{}) bool {
+				d := value.(*Device)
+				if time.Since(d.GpsTime) <= c.Position.Interval {
+					list = append(list, &DevicePosition{ID: d.ID, GpsTime: d.GpsTime, Longitude: d.Longitude, Latitude: d.Latitude})
+				}
+				return true
+			})
+		} else if v, ok := Devices.Load(id); ok {
+			d := v.(*Device)
+			list = append(list, &DevicePosition{ID: d.ID, GpsTime: d.GpsTime, Longitude: d.Longitude, Latitude: d.Latitude})
+		}
+		return
+	}, c.Position.Interval, w, r)
 }

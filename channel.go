@@ -26,7 +26,7 @@ type ChannelEx struct {
 	RecordEndTime   string
 	recordStartTime time.Time
 	recordEndTime   time.Time
-	liveInviteLock  sync.Mutex
+	liveInviteLock  *sync.Mutex
 	tcpPortIndex    uint16
 	GpsTime         time.Time //gps时间
 	Longitude       string    //经度
@@ -50,37 +50,16 @@ type Channel struct {
 	Secrecy      int
 	Status       string
 	Children     []*Channel `json:"-"`
-	*ChannelEx              //自定义属性
+	ChannelEx               //自定义属性
 }
 
-func (c *Channel) Copy(v *Channel) {
-	if v == nil {
-		return
-	}
-
-	c.DeviceID = v.DeviceID
-	c.ParentID = v.ParentID
-	c.Name = v.Name
-	c.Manufacturer = v.Manufacturer
-	c.Model = v.Model
-	c.Owner = v.Owner
-	c.CivilCode = v.CivilCode
-	c.Address = v.Address
-	c.Parental = v.Parental
-	c.SafetyWay = v.SafetyWay
-	c.RegisterWay = v.RegisterWay
-	c.Secrecy = v.Secrecy
-	c.Status = v.Status
-	c.Status = v.Status
-	c.ChannelEx = v.ChannelEx
-}
-
-func (c *Channel) CreateRequst(Method sip.RequestMethod) (req sip.Request) {
-	d := c.device
+func (channel *Channel) CreateRequst(Method sip.RequestMethod) (req sip.Request) {
+	d := channel.device
 	d.sn++
 
 	callId := sip.CallID(utils.RandNumString(10))
 	userAgent := sip.UserAgentHeader("Monibuca")
+	maxForwards := sip.MaxForwards(70) //增加max-forwards为默认值 70
 	cseq := sip.CSeq{
 		SeqNo:      uint32(d.sn),
 		MethodName: Method,
@@ -97,15 +76,15 @@ func (c *Channel) CreateRequst(Method sip.RequestMethod) (req sip.Request) {
 	}
 	//非同一域的目标地址需要使用@host
 	host := conf.Realm
-	if c.DeviceID[0:9] != host {
+	if channel.DeviceID[0:9] != host {
 		deviceIp := d.NetAddr
 		deviceIp = deviceIp[0:strings.LastIndex(deviceIp, ":")]
-		host = fmt.Sprintf("%s:%d", deviceIp, c.Port)
+		host = fmt.Sprintf("%s:%d", deviceIp, channel.Port)
 	}
 
 	channelAddr := sip.Address{
 		//DisplayName: sip.String{Str: d.serverConfig.Serial},
-		Uri: &sip.SipUri{FUser: sip.String{Str: c.DeviceID}, FHost: host},
+		Uri: &sip.SipUri{FUser: sip.String{Str: channel.DeviceID}, FHost: host},
 	}
 	req = sip.NewRequest(
 		"",
@@ -118,6 +97,7 @@ func (c *Channel) CreateRequst(Method sip.RequestMethod) (req sip.Request) {
 			&callId,
 			&userAgent,
 			&cseq,
+			&maxForwards,
 			serverAddr.AsContactHeader(),
 		},
 		"",
@@ -232,7 +212,8 @@ func (o *InviteOptions) CreateSSRC() {
 	o.SSRC = uint32(_ssrc)
 }
 
-/*
+//Invite  发送Invite报文，注意里面的锁保证不同时发送invite报文，该锁由channel持有
+/***
 f字段： f = v/编码格式/分辨率/帧率/码率类型/码率大小a/编码格式/码率大小/采样率
 各项具体含义：
     v：后续参数为视频的参数；各参数间以 “/”分割；
@@ -367,7 +348,8 @@ func (channel *Channel) Invite(opt InviteOptions) (code int, err error) {
 	invite.AppendHeader(&subject)
 	publisher.inviteRes, err = d.SipRequestForResponse(invite)
 	if err != nil {
-		return http.StatusRequestTimeout, err
+		plugin.Error(fmt.Sprintf("SIP->Invite %s :%s invite error: %s", channel.DeviceID, invite.String(), err.Error()))
+		return http.StatusInternalServerError, err
 	}
 	code = int(publisher.inviteRes.StatusCode())
 	plugin.Info(fmt.Sprintf("Channel :%s invite response status code: %d", channel.DeviceID, code))
