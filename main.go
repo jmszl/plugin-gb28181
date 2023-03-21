@@ -19,7 +19,7 @@ type GB28181PositionConfig struct {
 type GB28181Config struct {
 	AutoInvite     bool `default:"true"`
 	PreFetchRecord bool
-	InviteIDs      string
+	InviteIDs      string //按照国标gb28181协议允许邀请的设备类型:132 摄像机 NVR
 
 	//sip服务器的配置
 	SipNetwork string `default:"udp"` //传输协议，默认UDP，可选TCP
@@ -47,12 +47,12 @@ type GB28181Config struct {
 	// WaitKeyFrame      bool //是否等待关键帧，如果等待，则在收到第一个关键帧之前，忽略所有媒体流
 	RemoveBanInterval time.Duration `default:"600s"` //移除禁止设备间隔
 	UdpCacheSize      int           //udp缓存大小
-
+	LogLevel          string        `default:"info"` //trace, debug, info, warn, error, fatal, panic
+	routes            map[string]string
+	DumpPath          string //dump PS流本地文件路径
+	RtpReorder        bool   `default:"true"`
 	config.Publish
 	Server
-	LogLevel string `default:"info"` //trace, debug, info, warn, error, fatal, panic
-	routes   map[string]string
-	DumpPath string //dump PS流本地文件路径
 
 	Position GB28181PositionConfig //关于定位的配置参数
 }
