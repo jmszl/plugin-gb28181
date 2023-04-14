@@ -143,7 +143,7 @@ func (c *GB28181Config) API_position(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (conf *GB28181Config) API_getcatalog(w http.ResponseWriter, r *http.Request) {
+func (c *GB28181Config) API_getcatalog(w http.ResponseWriter, r *http.Request) {
 	//CORS(w, r)
 	query := r.URL.Query()
 	//设备id

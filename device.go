@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"m7s.live/engine/v4"
 	"net/http"
 	"os"
 	"strings"
@@ -13,7 +14,6 @@ import (
 	"golang.org/x/exp/maps"
 
 	"go.uber.org/zap"
-	"m7s.live/engine/v4"
 	"m7s.live/plugin/gb28181/v4/utils"
 
 	// . "github.com/logrusorgru/aurora"
@@ -72,6 +72,17 @@ type Device struct {
 	GpsTime      time.Time //gps时间
 	Longitude    string    //经度
 	Latitude     string    //纬度
+}
+
+func (d *Device) GetChannels() []*Channel {
+
+	channels := make([]*Channel, 0, len(d.ChannelMap))
+	d.channelMutex.Lock()
+	defer d.channelMutex.Unlock()
+	for s := range d.ChannelMap {
+		channels = append(channels, d.ChannelMap[s])
+	}
+	return channels
 }
 
 func (d *Device) MarshalJSON() ([]byte, error) {
