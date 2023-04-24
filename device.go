@@ -7,6 +7,7 @@ import (
 	"m7s.live/engine/v4"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -215,13 +216,27 @@ func (d *Device) addOrUpdateChannel(channel *Channel) {
 	defer d.channelMutex.Unlock()
 	channel.device = d
 	if old, ok := d.ChannelMap[channel.DeviceID]; ok {
-		//复制锁指针
-		channel.ChannelEx = old.ChannelEx
+
+		sourceValue := reflect.ValueOf(channel).Elem()
+		destValue := reflect.ValueOf(old).Elem()
+
+		for i := 0; i < sourceValue.NumField(); i++ {
+			sourceField := sourceValue.Field(i)
+			destField := destValue.FieldByName(sourceValue.Type().Field(i).Name)
+
+			switch sourceField.Kind() {
+			case reflect.Int, reflect.String:
+				destField.Set(sourceField)
+			default:
+				continue
+			}
+		}
+	} else {
+		d.ChannelMap[channel.DeviceID] = channel
 	}
 	if channel.liveInviteLock == nil {
 		channel.liveInviteLock = &sync.Mutex{}
 	}
-	d.ChannelMap[channel.DeviceID] = channel
 }
 
 func (d *Device) deleteChannel(DeviceID string) {
