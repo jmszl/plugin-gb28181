@@ -277,6 +277,7 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 		HeaderName: "Subject", Contents: fmt.Sprintf("%s:%s,%s:0", channel.DeviceID, opt.ssrc, conf.Serial),
 	}
 	invite.AppendHeader(&subject)
+	plugin.Sugar().Debugf("req: %+v", invite)
 	publisher.inviteRes, err = d.SipRequestForResponse(invite)
 	if err != nil {
 		plugin.Error(fmt.Sprintf("SIP->Invite %s :%s invite error: %s", channel.DeviceID, invite.String(), err.Error()))
