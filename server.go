@@ -248,7 +248,7 @@ func (c *GB28181Config) listenMediaUDP() {
 		}
 		x := time.Since(t)
 		if x > time.Millisecond {
-			fmt.Println(x)
+			plugin.Sugar().Info(x)
 		}
 	}
 }

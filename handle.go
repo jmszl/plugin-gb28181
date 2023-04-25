@@ -56,11 +56,11 @@ func (c *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransaction) {
 
 	defer func() {
 		if err := recover(); err != nil {
-			fmt.Println("----------OnRegister recover----------")
-			fmt.Println(err)
+			plugin.Sugar().Errorf("----------OnRegister recover----------")
+			plugin.Sugar().Error(err)
 		}
 		if req != nil {
-			fmt.Printf("req: %+v", req)
+			plugin.Sugar().Error("req: %+v", req)
 		}
 	}()
 
