@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	myip "github.com/husanpao/ip"
 	. "m7s.live/engine/v4"
-	"m7s.live/engine/v4/config"
+	"m7s.live/engine/v4/util"
 )
 
 type GB28181PositionConfig struct {
@@ -18,19 +19,23 @@ type GB28181PositionConfig struct {
 }
 
 type GB28181Config struct {
-	AutoInvite     bool `default:"true"`
+	// AutoInvite     bool `default:"true"`
+	InviteMode     int `default:"1"` //邀请模式，0:手动拉流，1:预拉流，2:按需拉流
 	PreFetchRecord bool
 	InviteIDs      string //按照国标gb28181协议允许邀请的设备类型:132 摄像机 NVR
 	ListenAddr     string `default:"0.0.0.0"`
 	//sip服务器的配置
-	SipNetwork string `default:"udp"` //传输协议，默认UDP，可选TCP
-	SipIP      string //sip 服务器公网IP
-	SipPort    uint16 `default:"5060"`                 //sip 服务器端口，默认 5060
-	Serial     string `default:"34020000002000000001"` //sip 服务器 id, 默认 34020000002000000001
-	Realm      string `default:"3402000000"`           //sip 服务器域，默认 3402000000
-	Username   string //sip 服务器账号
-	Password   string //sip 服务器密码
-
+	SipNetwork string   `default:"udp"` //传输协议，默认UDP，可选TCP
+	SipIP      string   //sip 服务器公网IP
+	SipPort    uint16   `default:"5060"`                 //sip 服务器端口，默认 5060
+	Serial     string   `default:"34020000002000000001"` //sip 服务器 id, 默认 34020000002000000001
+	Realm      string   `default:"3402000000"`           //sip 服务器域，默认 3402000000
+	Username   string   //sip 服务器账号
+	Password   string   //sip 服务器密码
+	Port       struct { // 新配置方式
+		Sip   string `default:"udp:5060"`
+		Media string `default:"tcp:58200"`
+	}
 	// AckTimeout        uint16 //sip 服务应答超时，单位秒
 	RegisterValidity time.Duration `default:"60s"` //注册有效期，单位秒，默认 3600
 	// RegisterInterval  int    //注册间隔，单位秒，默认 60
@@ -47,15 +52,16 @@ type GB28181Config struct {
 
 	// WaitKeyFrame      bool //是否等待关键帧，如果等待，则在收到第一个关键帧之前，忽略所有媒体流
 	RemoveBanInterval time.Duration `default:"600s"` //移除禁止设备间隔
-	UdpCacheSize      int           //udp缓存大小
-	LogLevel          string        `default:"info"` //trace, debug, info, warn, error, fatal, panic
-	routes            map[string]string
-	DumpPath          string //dump PS流本地文件路径
-	RtpReorder        bool   `default:"true"`
-	config.Publish
-	Server
+	// UdpCacheSize      int           //udp缓存大小
+	LogLevel string `default:"info"` //trace, debug, info, warn, error, fatal, panic
+	routes   map[string]string
+	DumpPath string //dump PS流本地文件路径
+	Ignores  map[string]struct{}
+	tcpPorts PortManager
+	udpPorts PortManager
 
 	Position GB28181PositionConfig //关于定位的配置参数
+
 }
 
 func (c *GB28181Config) initRoutes() {
@@ -69,13 +75,39 @@ func (c *GB28181Config) initRoutes() {
 	}
 	plugin.Info(fmt.Sprintf("LocalAndInternalIPs detail: %s", c.routes))
 }
+
 func (c *GB28181Config) OnEvent(event any) {
-	switch event.(type) {
+	switch e := event.(type) {
 	case FirstConfig:
+		if c.Port.Sip != "udp:5060" {
+			protocol, ports := util.Conf2Listener(c.Port.Sip)
+			c.SipNetwork = protocol
+			c.SipPort = ports[0]
+		}
+		if c.Port.Media != "tcp:58200" {
+			protocol, ports := util.Conf2Listener(c.Port.Media)
+			c.MediaNetwork = protocol
+			if len(ports) > 1 {
+				c.MediaPortMin = ports[0]
+				c.MediaPortMax = ports[1]
+			} else {
+				c.MediaPort = ports[0]
+			}
+		}
 		os.MkdirAll(c.DumpPath, 0766)
 		c.ReadDevices()
 		go c.initRoutes()
 		c.startServer()
+	case *Stream:
+		if c.InviteMode == 2 {
+			if channel := FindChannel(e.AppName, e.StreamName); channel != nil {
+				channel.TryAutoInvite(&InviteOptions{})
+			}
+		}
+	case SEclose:
+		if v, ok := PullStreams.LoadAndDelete(e.Target.Path); ok {
+			go v.(*PullStream).Bye()
+		}
 	}
 }
 
@@ -86,3 +118,4 @@ func (c *GB28181Config) IsMediaNetworkTCP() bool {
 var conf GB28181Config
 
 var plugin = InstallPlugin(&conf)
+var PullStreams sync.Map //拉流
