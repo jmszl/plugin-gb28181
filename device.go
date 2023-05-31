@@ -24,7 +24,6 @@ const TIME_LAYOUT = "2006-01-02T15:04:05"
 
 // Record 录像
 type Record struct {
-	//channel   *Channel
 	DeviceID  string
 	Name      string
 	FilePath  string
@@ -87,14 +86,14 @@ func (d *Device) GetChannels() []*Channel {
 func (d *Device) MarshalJSON() ([]byte, error) {
 	type Alias Device
 	data := &struct {
-		Channels []*Channel
+		Channels []*ChannelInfo
 		*Alias
 	}{
 		Alias: (*Alias)(d),
 	}
 	d.channelMap.Range(func(key, value interface{}) bool {
 		c := value.(*Channel)
-		data.Channels = append(data.Channels, c)
+		data.Channels = append(data.Channels, &c.ChannelInfo)
 		return true
 	})
 	return json.Marshal(data)
@@ -212,32 +211,31 @@ func (c *GB28181Config) SaveDevices() {
 	}
 }
 
-func (d *Device) addOrUpdateChannel(channel *Channel) {
-	if old, ok := d.channelMap.Load(channel.DeviceID); ok {
-		channel.ChannelEx = old.(*Channel).ChannelEx
+func (d *Device) addOrUpdateChannel(info ChannelInfo) (c *Channel) {
+	if old, ok := d.channelMap.Load(info.DeviceID); ok {
+		c = old.(*Channel)
+		c.ChannelInfo = info
+	} else {
+		c = &Channel{
+			device:      d,
+			ChannelInfo: info,
+			Logger:      d.Logger.With(zap.String("channel", info.DeviceID)),
+		}
+		if s := engine.Streams.Get(fmt.Sprintf("%s/%s/rtsp", c.device.ID, c.DeviceID)); s != nil {
+			c.LiveSubSP = s.Path
+		} else {
+			c.LiveSubSP = ""
+		}
+		d.channelMap.Store(info.DeviceID, c)
 	}
-	channel.device = d
-	channel.Logger = d.Logger.With(zap.String("channel", channel.DeviceID), zap.String("name", channel.Name))
-	d.channelMap.Store(channel.DeviceID, channel)
+	return
 }
 
 func (d *Device) deleteChannel(DeviceID string) {
 	d.channelMap.Delete(DeviceID)
 }
 
-func (d *Device) CheckSubStream() {
-	d.channelMap.Range(func(key, value any) bool {
-		c := value.(*Channel)
-		if s := engine.Streams.Get("sub/" + c.DeviceID); s != nil {
-			c.LiveSubSP = s.Path
-		} else {
-			c.LiveSubSP = ""
-		}
-		return true
-	})
-}
-func (d *Device) UpdateChannels(list []*Channel) {
-
+func (d *Device) UpdateChannels(list ...ChannelInfo) {
 	for _, c := range list {
 		if _, ok := conf.Ignores[c.DeviceID]; ok {
 			continue
@@ -260,31 +258,17 @@ func (d *Device) UpdateChannels(list []*Channel) {
 			}
 		}
 		//本设备增加通道
-		d.addOrUpdateChannel(c)
+		channel := d.addOrUpdateChannel(c)
 
-		//预取和邀请
-		if conf.PreFetchRecord {
-			n := time.Now()
-			n = time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.Local)
-			if len(c.Records) == 0 || (n.Format(TIME_LAYOUT) == c.RecordStartTime &&
-				n.Add(time.Hour*24-time.Second).Format(TIME_LAYOUT) == c.RecordEndTime) {
-				go c.QueryRecord(n.Format(TIME_LAYOUT), n.Add(time.Hour*24-time.Second).Format(TIME_LAYOUT))
-			}
+		if conf.InviteMode == INVIDE_MODE_AUTO {
+			channel.TryAutoInvite(&InviteOptions{})
 		}
-		c.TryAutoInvite(&InviteOptions{})
 		if s := engine.Streams.Get("sub/" + c.DeviceID); s != nil {
-			c.LiveSubSP = s.Path
+			channel.LiveSubSP = s.Path
 		} else {
-			c.LiveSubSP = ""
+			channel.LiveSubSP = ""
 		}
 	}
-}
-func (d *Device) UpdateRecord(channelId string, list []*Record) {
-	d.channelMap.Range(func(key, value any) bool {
-		c := value.(*Channel)
-		c.Records = append(c.Records, list...)
-		return true
-	})
 }
 
 func (d *Device) CreateRequest(Method sip.RequestMethod) (req sip.Request) {
@@ -369,7 +353,7 @@ func (d *Device) Subscribe() int {
 
 	response, err := d.SipRequestForResponse(request)
 	if err == nil && response != nil {
-		if response.StatusCode() == OK {
+		if response.StatusCode() == http.StatusOK {
 			callId, _ := request.CallID()
 			d.subscriber.CallID = string(*callId)
 		} else {
@@ -420,7 +404,7 @@ func (d *Device) QueryDeviceInfo() {
 			// 	d.SipIP = received.String()
 			// }
 			d.Info("QueryDeviceInfo", zap.Uint16("status code", uint16(response.StatusCode())))
-			if response.StatusCode() == OK {
+			if response.StatusCode() == http.StatusOK {
 				break
 			}
 		}
@@ -448,7 +432,7 @@ func (d *Device) MobilePositionSubscribe(id string, expires time.Duration, inter
 
 	response, err := d.SipRequestForResponse(mobilePosition)
 	if err == nil && response != nil {
-		if response.StatusCode() == OK {
+		if response.StatusCode() == http.StatusOK {
 			callId, _ := mobilePosition.CallID()
 			d.subscriber.CallID = callId.String()
 		} else {
@@ -463,9 +447,9 @@ func (d *Device) MobilePositionSubscribe(id string, expires time.Duration, inter
 func (d *Device) UpdateChannelPosition(channelId string, gpsTime string, lng string, lat string) {
 	if v, ok := d.channelMap.Load(channelId); ok {
 		c := v.(*Channel)
-		c.ChannelEx.GpsTime = time.Now() //时间取系统收到的时间，避免设备时间和格式问题
-		c.ChannelEx.Longitude = lng
-		c.ChannelEx.Latitude = lat
+		c.GpsTime = time.Now() //时间取系统收到的时间，避免设备时间和格式问题
+		c.Longitude = lng
+		c.Latitude = lat
 		c.Debug("update channel position success")
 	} else {
 		//如果未找到通道，则更新到设备上
@@ -494,7 +478,7 @@ func (d *Device) UpdateChannelStatus(deviceList []*notifyMessage) {
 			d.channelOffline(v.DeviceID)
 		case "ADD":
 			d.Debug("receive channel add notify")
-			channel := Channel{
+			channel := ChannelInfo{
 				DeviceID:     v.DeviceID,
 				ParentID:     v.ParentID,
 				Name:         v.Name,
@@ -510,7 +494,7 @@ func (d *Device) UpdateChannelStatus(deviceList []*notifyMessage) {
 				Secrecy:      v.Secrecy,
 				Status:       v.Status,
 			}
-			d.addOrUpdateChannel(&channel)
+			d.addOrUpdateChannel(channel)
 		case "DEL":
 			//删除
 			d.Debug("receive channel delete notify")
@@ -518,7 +502,7 @@ func (d *Device) UpdateChannelStatus(deviceList []*notifyMessage) {
 		case "UPDATE":
 			d.Debug("receive channel update notify")
 			// 更新通道
-			channel := &Channel{
+			channel := ChannelInfo{
 				DeviceID:     v.DeviceID,
 				ParentID:     v.ParentID,
 				Name:         v.Name,
@@ -534,8 +518,7 @@ func (d *Device) UpdateChannelStatus(deviceList []*notifyMessage) {
 				Secrecy:      v.Secrecy,
 				Status:       v.Status,
 			}
-			channels := []*Channel{channel}
-			d.UpdateChannels(channels)
+			d.UpdateChannels(channel)
 		}
 	}
 }

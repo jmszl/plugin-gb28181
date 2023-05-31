@@ -52,19 +52,11 @@ func (a *Authorization) getDigest(raw string) string {
 }
 
 func (c *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransaction) {
-
-	defer func() {
-		if err := recover(); err != nil {
-			plugin.Sugar().Errorf("----------OnRegister recover----------")
-			plugin.Sugar().Error(err)
-		}
-		if req != nil {
-			plugin.Sugar().Debugf("req: %+v", req)
-		}
-	}()
-
-	from, _ := req.From()
-
+	from, ok := req.From()
+	if !ok {
+		GB28181Plugin.Error("OnRegister", zap.String("error", "no from"))
+		return
+	}
 	id := from.Address.User().String()
 	GB28181Plugin.Info("OnRegister", zap.String("id", id), zap.String("source", req.Source()), zap.String("destination", req.Destination()))
 	if len(id) != 20 {
@@ -173,13 +165,15 @@ func (c *GB28181Config) OnMessage(req sip.Request, tx sip.ServerTransaction) {
 		temp := &struct {
 			XMLName      xml.Name
 			CmdType      string
+			SN           int // 请求序列号，一般用于对应 request 和 response
 			DeviceID     string
 			DeviceName   string
 			Manufacturer string
 			Model        string
 			Channel      string
-			DeviceList   []*Channel `xml:"DeviceList>Item"`
-			RecordList   []*Record  `xml:"RecordList>Item"`
+			DeviceList   []ChannelInfo `xml:"DeviceList>Item"`
+			RecordList   []*Record     `xml:"RecordList>Item"`
+			SumNum       int           // 录像结果的总数 SumNum，录像结果会按照多条消息返回，可用于判断是否全部返回
 		}{}
 		decoder := xml.NewDecoder(bytes.NewReader([]byte(req.Body())))
 		decoder.CharsetReader = charset.NewReaderLabel
@@ -199,23 +193,21 @@ func (c *GB28181Config) OnMessage(req sip.Request, tx sip.ServerTransaction) {
 				go d.syncChannels()
 			} else {
 				d.channelMap.Range(func(key, value interface{}) bool {
-					channel := value.(*Channel)
-					channel.TryAutoInvite(&InviteOptions{})
+					if conf.InviteMode == INVIDE_MODE_AUTO {
+						value.(*Channel).TryAutoInvite(&InviteOptions{})
+					}
 					return true
 				})
 			}
-			//为什么要查找子码流?
-			//d.CheckSubStream()
 			//在KeepLive 进行位置订阅的处理，如果开启了自动订阅位置，则去订阅位置
 			if c.Position.AutosubPosition && time.Since(d.GpsTime) > c.Position.Interval*2 {
 				d.MobilePositionSubscribe(d.ID, c.Position.Expires, c.Position.Interval)
 				GB28181Plugin.Debug("Mobile Position Subscribe", zap.String("deviceID", d.ID))
 			}
 		case "Catalog":
-			plugin.Sugar().Info("DeviceID:", aurora.Red(d.ID), "收到Catalog")
-			d.UpdateChannels(temp.DeviceList)
+			d.UpdateChannels(temp.DeviceList...)
 		case "RecordInfo":
-			d.UpdateRecord(temp.DeviceID, temp.RecordList)
+			RecordQueryLink.Put(d.ID, temp.DeviceID, temp.SN, temp.SumNum, temp.RecordList)
 		case "DeviceInfo":
 			// 主设备信息
 			d.Name = temp.DeviceName
