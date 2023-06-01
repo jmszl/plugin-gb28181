@@ -74,12 +74,12 @@ type Device struct {
 
 func (d *Device) GetChannels() []*Channel {
 
-	channels := make([]*Channel, 0, len(d.ChannelMap))
-	d.channelMutex.Lock()
-	defer d.channelMutex.Unlock()
-	for s := range d.ChannelMap {
-		channels = append(channels, d.ChannelMap[s])
-	}
+	channels := make([]*Channel, 0)
+	d.channelMap.Range(func(key, value interface{}) bool {
+		c := value.(*Channel)
+		channels = append(channels, c)
+		return true
+	})
 	return channels
 }
 

@@ -320,8 +320,6 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 	}
 	invite.AppendHeader(&subject)
 	inviteRes, err := d.SipRequestForResponse(invite)
-	plugin.Sugar().Debugf("req: %+v", invite)
-	publisher.inviteRes, err = d.SipRequestForResponse(invite)
 	if err != nil {
 		channel.Error("invite", zap.Error(err), zap.String("msg", invite.String()))
 		return http.StatusInternalServerError, err
