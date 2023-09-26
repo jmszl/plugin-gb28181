@@ -61,6 +61,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace m7s.live/engine/v4 => github.com/jmszl/engine/v4 v4.0.10
+replace m7s.live/engine/v4 => github.com/jmszl/engine/v4 v4.0.11
 
 //replace m7s.live/engine/v4 => D:\github.com\jmszl\engine

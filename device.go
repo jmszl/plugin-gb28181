@@ -129,9 +129,9 @@ func (c *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
 		sipIP = myip.InternalIPv4()
 	}
 	mediaIp := sipIP
-	if c.MediaIP != "" {
-		mediaIp = c.MediaIP
-	}
+	//if c.MediaIP != "" {
+	//	mediaIp = c.MediaIP
+	//}
 	d.Info("RecoverDevice", zap.String("deviceIp", deviceIp), zap.String("servIp", servIp), zap.String("sipIP", sipIP), zap.String("mediaIp", mediaIp))
 	d.Status = DeviceRegisterStatus
 	d.sipIP = sipIP
