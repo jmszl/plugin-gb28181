@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ghettovoice/gosip/sip"
+	"github.com/goccy/go-json"
 	"go.uber.org/zap"
 	. "m7s.live/engine/v4"
 	"m7s.live/engine/v4/log"
@@ -25,19 +26,23 @@ type PullStream struct {
 	inviteRes sip.Response
 }
 
-func (p *PullStream) Bye() int {
+func (p *PullStream) CreateRequest(method sip.RequestMethod) (req sip.Request) {
 	res := p.inviteRes
-	bye := p.channel.CreateRequst(sip.BYE)
+	req = p.channel.CreateRequst(method)
 	from, _ := res.From()
 	to, _ := res.To()
 	callId, _ := res.CallID()
-	bye.ReplaceHeaders(from.Name(), []sip.Header{from})
-	bye.ReplaceHeaders(to.Name(), []sip.Header{to})
-	bye.ReplaceHeaders(callId.Name(), []sip.Header{callId})
-	resp, err := p.channel.device.SipRequestForResponse(bye)
+	req.ReplaceHeaders(from.Name(), []sip.Header{from})
+	req.ReplaceHeaders(to.Name(), []sip.Header{to})
+	req.ReplaceHeaders(callId.Name(), []sip.Header{callId})
+	return
+}
+
+func (p *PullStream) Bye() int {
+	req := p.CreateRequest(sip.BYE)
+	resp, err := p.channel.device.SipRequestForResponse(req)
 	if p.opt.IsLive() {
 		p.channel.status.Store(0)
-		// defer p.channel.TryAutoInvite(p.opt)
 	}
 	if p.opt.recyclePort != nil {
 		p.opt.recyclePort(p.opt.MediaPort)
@@ -48,15 +53,96 @@ func (p *PullStream) Bye() int {
 	return int(resp.StatusCode())
 }
 
+func (p *PullStream) info(body string) int {
+	d := p.channel.device
+	req := p.CreateRequest(sip.INFO)
+	contentType := sip.ContentType("Application/MANSRTSP")
+	req.AppendHeader(&contentType)
+	req.SetBody(body, true)
+
+	resp, err := d.SipRequestForResponse(req)
+	if err != nil {
+		log.Warnf("Send info to stream error: %v, stream=%s, body=%s", err, p.opt.StreamPath, body)
+		return getSipRespErrorCode(err)
+	}
+	return int(resp.StatusCode())
+}
+
+// 暂停播放
+func (p *PullStream) Pause() int {
+	body := fmt.Sprintf(`PAUSE RTSP/1.0
+CSeq: %d
+PauseTime: now
+`, p.channel.device.sn)
+	return p.info(body)
+}
+
+// 恢复播放
+func (p *PullStream) Resume() int {
+	d := p.channel.device
+	body := fmt.Sprintf(`PLAY RTSP/1.0
+CSeq: %d
+Range: npt=now-
+`, d.sn)
+	return p.info(body)
+}
+
+// 跳转到播放时间
+// second: 相对于起始点调整到第 sec 秒播放
+func (p *PullStream) PlayAt(second uint) int {
+	d := p.channel.device
+	body := fmt.Sprintf(`PLAY RTSP/1.0
+CSeq: %d
+Range: npt=%d-
+`, d.sn, second)
+	return p.info(body)
+}
+
+// 快进/快退播放
+// speed 取值： 0.25 0.5 1 2 4 或者其对应的负数表示倒放
+func (p *PullStream) PlayForward(speed float32) int {
+	d := p.channel.device
+	body := fmt.Sprintf(`PLAY RTSP/1.0
+CSeq: %d
+Scale: %0.6f
+`, d.sn, speed)
+	return p.info(body)
+}
+
 type Channel struct {
 	device      *Device      // 所属设备
 	status      atomic.Int32 // 通道状态,0:空闲,1:正在invite,2:正在播放
 	LiveSubSP   string       // 实时子码流，通过rtsp
-	GpsTime     time.Time    //gps时间
-	Longitude   string       //经度
-	Latitude    string       //纬度
+	GpsTime     time.Time    // gps时间
+	Longitude   string       // 经度
+	Latitude    string       // 纬度
 	*log.Logger `json:"-" yaml:"-"`
 	ChannelInfo
+}
+
+func (c *Channel) MarshalJSON() ([]byte, error) {
+	m := map[string]any{
+		"DeviceID":     c.DeviceID,
+		"ParentID":     c.ParentID,
+		"Name":         c.Name,
+		"Manufacturer": c.Manufacturer,
+		"Model":        c.Model,
+		"Owner":        c.Owner,
+		"CivilCode":    c.CivilCode,
+		"Address":      c.Address,
+		"Port":         c.Port,
+		"Parental":     c.Parental,
+		"SafetyWay":    c.SafetyWay,
+		"RegisterWay":  c.RegisterWay,
+		"Secrecy":      c.Secrecy,
+		"Status":       c.Status,
+		"Longitude":    c.Longitude,
+		"Latitude":     c.Latitude,
+		"GpsTime":      c.GpsTime,
+		"LiveSubSP":    c.LiveSubSP,
+		"LiveStatus":   c.status.Load(),
+	}
+	return json.Marshal(m)
 }
 
 // Channel 通道
@@ -74,8 +160,15 @@ type ChannelInfo struct {
 	SafetyWay    int
 	RegisterWay  int
 	Secrecy      int
-	Status       string
+	Status       ChannelStatus
 }
+
+type ChannelStatus string
+
+const (
+	ChannelOnStatus  = "ON"
+	ChannelOffStatus = "OFF"
+)
 
 func (channel *Channel) CreateRequst(Method sip.RequestMethod) (req sip.Request) {
 	d := channel.device
@@ -142,16 +235,19 @@ func (channel *Channel) QueryRecord(startTime, endTime string) ([]*Record, error
 	request := d.CreateRequest(sip.MESSAGE)
 	contentType := sip.ContentType("Application/MANSCDP+xml")
 	request.AppendHeader(&contentType)
-	body := fmt.Sprintf(`<?xml version="1.0"?>
-		<Query>
-		<CmdType>RecordInfo</CmdType>
-		<SN>%d</SN>
-		<DeviceID>%s</DeviceID>
-		<StartTime>%s</StartTime>
-		<EndTime>%s</EndTime>
-		<Secrecy>0</Secrecy>
-		<Type>all</Type>
-		</Query>`, d.sn, channel.DeviceID, startTime, endTime)
+	// body := fmt.Sprintf(`<?xml version="1.0"?>
+	// 	<Query>
+	// 	<CmdType>RecordInfo</CmdType>
+	// 	<SN>%d</SN>
+	// 	<DeviceID>%s</DeviceID>
+	// 	<StartTime>%s</StartTime>
+	// 	<EndTime>%s</EndTime>
+	// 	<Secrecy>0</Secrecy>
+	// 	<Type>all</Type>
+	// 	</Query>`, d.sn, channel.DeviceID, startTime, endTime)
+	start, _ := strconv.ParseInt(startTime, 10, 0)
+	end, _ := strconv.ParseInt(endTime, 10, 0)
+	body := BuildRecordInfoXML(d.sn, channel.DeviceID, start, end)
 	request.SetBody(body, true)
 
 	resultCh := RecordQueryLink.WaitResult(d.ID, channel.DeviceID, d.sn, QUERY_RECORD_TIMEOUT)
@@ -265,26 +361,28 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 	}
 	if opt.StreamPath != "" {
 		streamPath = opt.StreamPath
+	} else {
+		opt.StreamPath = streamPath
 	}
 	if opt.dump == "" {
 		opt.dump = conf.DumpPath
 	}
 	protocol := ""
 	networkType := "udp"
-	resuePort := true
+	reusePort := true
 	if conf.IsMediaNetworkTCP() {
 		networkType = "tcp"
 		protocol = "TCP/"
 		if conf.tcpPorts.Valid {
 			opt.MediaPort, err = conf.tcpPorts.GetPort()
 			opt.recyclePort = conf.tcpPorts.Recycle
-			resuePort = false
+			reusePort = false
 		}
 	} else {
 		if conf.udpPorts.Valid {
 			opt.MediaPort, err = conf.udpPorts.GetPort()
 			opt.recyclePort = conf.udpPorts.Recycle
-			resuePort = false
+			reusePort = false
 		}
 	}
 	if err != nil {
@@ -337,11 +435,20 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 					} else {
 						channel.Error("read invite response y ", zap.Error(err))
 					}
-					break
+					//	break
+				}
+				if ls[0] == "m" && len(ls[1]) > 0 {
+					netinfo := strings.Split(ls[1], " ")
+					if strings.ToUpper(netinfo[2]) == "TCP/RTP/AVP" {
+						channel.Debug("Device support tcp")
+					} else {
+						channel.Debug("Device not support tcp")
+						networkType = "udp"
+					}
 				}
 			}
 		}
-		err = ps.Receive(streamPath, opt.dump, fmt.Sprintf("%s:%d", networkType, opt.MediaPort), opt.SSRC, resuePort)
+		err = ps.Receive(streamPath, opt.dump, fmt.Sprintf("%s:%d", networkType, opt.MediaPort), opt.SSRC, reusePort)
 		if err == nil {
 			PullStreams.Store(streamPath, &PullStream{
 				opt:       opt,
@@ -369,6 +476,49 @@ func (channel *Channel) Bye(streamPath string) int {
 	return http.StatusNotFound
 }
 
+func (channel *Channel) Pause(streamPath string) int {
+	if s, loaded := PullStreams.Load(streamPath); loaded {
+		r := s.(*PullStream).Pause()
+		if s := Streams.Get(streamPath); s != nil {
+			s.Pause()
+		}
+		return r
+	}
+	return http.StatusNotFound
+}
+
+func (channel *Channel) Resume(streamPath string) int {
+	if s, loaded := PullStreams.Load(streamPath); loaded {
+		r := s.(*PullStream).Resume()
+		if s := Streams.Get(streamPath); s != nil {
+			s.Resume()
+		}
+		return r
+	}
+	return http.StatusNotFound
+}
+
+func (channel *Channel) PlayAt(streamPath string, second uint) int {
+	if s, loaded := PullStreams.Load(streamPath); loaded {
+		r := s.(*PullStream).PlayAt(second)
+		if s := Streams.Get(streamPath); s != nil {
+			s.Resume()
+		}
+		return r
+	}
+	return http.StatusNotFound
+}
+
+func (channel *Channel) PlayForward(streamPath string, speed float32) int {
+	if s, loaded := PullStreams.Load(streamPath); loaded {
+		return s.(*PullStream).PlayForward(speed)
+	}
+	if s := Streams.Get(streamPath); s != nil {
+		s.Resume()
+	}
+	return http.StatusNotFound
+}
+
 func (channel *Channel) TryAutoInvite(opt *InviteOptions) {
 	if channel.CanInvite() {
 		go channel.Invite(opt)
@@ -376,7 +526,7 @@ func (channel *Channel) TryAutoInvite(opt *InviteOptions) {
 }
 
 func (channel *Channel) CanInvite() bool {
-	if channel.status.Load() != 0 || len(channel.DeviceID) != 20 || channel.Status == "OFF" {
+	if channel.status.Load() != 0 || len(channel.DeviceID) != 20 || channel.Status == ChannelOffStatus {
 		return false
 	}
 
@@ -402,4 +552,12 @@ func (channel *Channel) CanInvite() bool {
 	}
 
 	return false
+}
+
+func getSipRespErrorCode(err error) int {
+	if re, ok := err.(*sip.RequestError); ok {
+		return int(re.Code)
+	} else {
+		return http.StatusInternalServerError
+	}
 }

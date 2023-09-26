@@ -32,10 +32,10 @@ type GB28181Config struct {
 	Password   string   //sip 服务器密码
 	Port       struct { // 新配置方式
 		Sip   string `default:"udp:5060"`
-		Media string `default:"tcp:58200"`
+		Media string `default:"tcp:58200-59200"`
 	}
 	// AckTimeout        uint16 //sip 服务应答超时，单位秒
-	RegisterValidity time.Duration `default:"60s"` //注册有效期，单位秒，默认 3600
+	RegisterValidity time.Duration `default:"3600s"` //注册有效期，单位秒，默认 3600
 	// RegisterInterval  int    //注册间隔，单位秒，默认 60
 	HeartbeatInterval time.Duration `default:"60s"` //心跳间隔，单位秒，默认 60
 	// HeartbeatRetry    int    //心跳超时次数，默认 3
@@ -44,8 +44,8 @@ type GB28181Config struct {
 	MediaIP      string //媒体服务器地址
 	MediaPort    uint16 `default:"58200"` //媒体服务器端口
 	MediaNetwork string `default:"tcp"`   //媒体传输协议，默认UDP，可选TCP
-	MediaPortMin uint16
-	MediaPortMax uint16
+	MediaPortMin uint16 `default:"58200"`
+	MediaPortMax uint16 `default:"59200"`
 	// MediaIdleTimeout uint16 //推流超时时间，超过则断开链接，让设备重连
 
 	// WaitKeyFrame      bool //是否等待关键帧，如果等待，则在收到第一个关键帧之前，忽略所有媒体流
@@ -82,13 +82,15 @@ func (c *GB28181Config) OnEvent(event any) {
 			c.SipNetwork = protocol
 			c.SipPort = ports[0]
 		}
-		if c.Port.Media != "tcp:58200" {
+		if c.Port.Media != "tcp:58200-59200" {
 			protocol, ports := util.Conf2Listener(c.Port.Media)
 			c.MediaNetwork = protocol
 			if len(ports) > 1 {
 				c.MediaPortMin = ports[0]
 				c.MediaPortMax = ports[1]
 			} else {
+				c.MediaPortMin = 0
+				c.MediaPortMax = 0
 				c.MediaPort = ports[0]
 			}
 		}
@@ -96,10 +98,23 @@ func (c *GB28181Config) OnEvent(event any) {
 		c.ReadDevices()
 		go c.initRoutes()
 		c.startServer()
-	case *Stream:
+	case InvitePublish:
 		if c.InviteMode == INVIDE_MODE_ONSUBSCRIBE {
-			if channel := FindChannel(e.AppName, e.StreamName); channel != nil {
-				channel.TryAutoInvite(&InviteOptions{})
+			//流可能是回放流，stream path是device/channel/start-end形式
+			streamNames := strings.Split(e.Target, "/")
+			if channel := FindChannel(streamNames[0], streamNames[1]); channel != nil {
+				opt := InviteOptions{}
+				if len(streamNames) > 2 {
+					last := len(streamNames) - 1
+					timestr := streamNames[last]
+					trange := strings.Split(timestr, "-")
+					if len(trange) == 2 {
+						startTime := trange[0]
+						endTime := trange[1]
+						opt.Validate(startTime, endTime)
+					}
+				}
+				channel.TryAutoInvite(&opt)
 			}
 		}
 	case SEpublish:

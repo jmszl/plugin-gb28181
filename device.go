@@ -15,7 +15,6 @@ import (
 	"m7s.live/engine/v4/log"
 	"m7s.live/plugin/gb28181/v4/utils"
 
-	// . "github.com/logrusorgru/aurora"
 	"github.com/ghettovoice/gosip/sip"
 	myip "github.com/husanpao/ip"
 )
@@ -44,6 +43,16 @@ var (
 	DeviceRegisterCount sync.Map //设备注册次数
 )
 
+type DeviceStatus string
+
+const (
+	DeviceRegisterStatus = "REGISTER"
+	DeviceRecoverStatus  = "RECOVER"
+	DeviceOnlineStatus   = "ONLINE"
+	DeviceOfflineStatus  = "OFFLINE"
+	DeviceAlarmedStatus  = "ALARMED"
+)
+
 type Device struct {
 	//*transaction.Core `json:"-" yaml:"-"`
 	ID              string
@@ -54,7 +63,7 @@ type Device struct {
 	RegisterTime    time.Time
 	UpdateTime      time.Time
 	LastKeepaliveAt time.Time
-	Status          string
+	Status          DeviceStatus
 	sn              int
 	addr            sip.Address
 	sipIP           string //设备对应网卡的服务器ip
@@ -86,14 +95,13 @@ func (d *Device) GetChannels() []*Channel {
 func (d *Device) MarshalJSON() ([]byte, error) {
 	type Alias Device
 	data := &struct {
-		Channels []*ChannelInfo
+		Channels []*Channel
 		*Alias
 	}{
 		Alias: (*Alias)(d),
 	}
 	d.channelMap.Range(func(key, value interface{}) bool {
-		c := value.(*Channel)
-		data.Channels = append(data.Channels, &c.ChannelInfo)
+		data.Channels = append(data.Channels, value.(*Channel))
 		return true
 	})
 	return json.Marshal(data)
@@ -125,7 +133,7 @@ func (c *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
 		mediaIp = c.MediaIP
 	}
 	d.Info("RecoverDevice", zap.String("deviceIp", deviceIp), zap.String("servIp", servIp), zap.String("sipIP", sipIP), zap.String("mediaIp", mediaIp))
-	d.Status = string(sip.REGISTER)
+	d.Status = DeviceRegisterStatus
 	d.sipIP = sipIP
 	d.mediaIP = mediaIp
 	d.NetAddr = deviceIp
@@ -162,14 +170,14 @@ func (c *GB28181Config) StoreDevice(id string, req sip.Request) (d *Device) {
 			sipIP = myip.InternalIPv4()
 		}
 		mediaIp := sipIP
-		if c.MediaIP != "" {
-			mediaIp = c.MediaIP
-		}
+		//if c.MediaIP != "" {
+		//	mediaIp = c.MediaIP
+		//}
 		d = &Device{
 			ID:           id,
 			RegisterTime: time.Now(),
 			UpdateTime:   time.Now(),
-			Status:       string(sip.REGISTER),
+			Status:       DeviceRegisterStatus,
 			addr:         deviceAddr,
 			sipIP:        sipIP,
 			mediaIP:      mediaIp,
@@ -492,7 +500,7 @@ func (d *Device) UpdateChannelStatus(deviceList []*notifyMessage) {
 				SafetyWay:    v.SafetyWay,
 				RegisterWay:  v.RegisterWay,
 				Secrecy:      v.Secrecy,
-				Status:       v.Status,
+				Status:       ChannelStatus(v.Status),
 			}
 			d.addOrUpdateChannel(channel)
 		case "DEL":
@@ -516,7 +524,7 @@ func (d *Device) UpdateChannelStatus(deviceList []*notifyMessage) {
 				SafetyWay:    v.SafetyWay,
 				RegisterWay:  v.RegisterWay,
 				Secrecy:      v.Secrecy,
-				Status:       v.Status,
+				Status:       ChannelStatus(v.Status),
 			}
 			d.UpdateChannels(channel)
 		}
@@ -526,8 +534,8 @@ func (d *Device) UpdateChannelStatus(deviceList []*notifyMessage) {
 func (d *Device) channelOnline(DeviceID string) {
 	if v, ok := d.channelMap.Load(DeviceID); ok {
 		c := v.(*Channel)
-		c.Status = "ON"
-		c.Debug("online")
+		c.Status = ChannelOnStatus
+		c.Debug("channel online", zap.String("channelId", DeviceID))
 	} else {
 		d.Debug("update channel status failed, not found", zap.String("channelId", DeviceID))
 	}
@@ -536,8 +544,8 @@ func (d *Device) channelOnline(DeviceID string) {
 func (d *Device) channelOffline(DeviceID string) {
 	if v, ok := d.channelMap.Load(DeviceID); ok {
 		c := v.(*Channel)
-		c.Status = "OFF"
-		c.Debug("offline")
+		c.Status = ChannelOffStatus
+		c.Debug("channel offline", zap.String("channelId", DeviceID))
 	} else {
 		d.Debug("update channel status failed, not found", zap.String("channelId", DeviceID))
 	}
