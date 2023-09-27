@@ -32,7 +32,7 @@ type GB28181Config struct {
 	Password   string   //sip 服务器密码
 	Port       struct { // 新配置方式
 		Sip   string `default:"udp:5060"`
-		Media string `default:"tcp:58200-59200"`
+		Media string `default:"tcp:58200"`
 	}
 	// AckTimeout        uint16 //sip 服务应答超时，单位秒
 	RegisterValidity time.Duration `default:"3600s"` //注册有效期，单位秒，默认 3600
