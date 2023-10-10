@@ -37,6 +37,20 @@ func (r *Record) GetPublishStreamPath() string {
 	return fmt.Sprintf("%s/%s", r.DeviceID, r.StartTime)
 }
 
+type Records []*Record
+
+func (rs Records) Len() int {
+	return len(rs)
+}
+
+func (rs Records) Less(i, j int) bool {
+	return rs[i].StartTime < rs[j].StartTime
+}
+
+func (rs Records) Swap(i, j int) {
+	rs[i], rs[j] = rs[j], rs[i]
+}
+
 var (
 	Devices             sync.Map
 	DeviceNonce         sync.Map //保存nonce防止设备伪造

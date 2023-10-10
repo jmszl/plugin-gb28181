@@ -3,6 +3,7 @@ package gb28181
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -43,7 +44,9 @@ func (c *GB28181Config) API_records(w http.ResponseWriter, r *http.Request) {
 	if c := FindChannel(id, channel); c != nil {
 		res, err := c.QueryRecord(startTime, endTime)
 		if err == nil {
-			util.ReturnValue(res, w, r)
+			var rs Records = res
+			sort.Sort(rs)
+			util.ReturnValue(rs, w, r)
 		} else {
 			util.ReturnError(util.APIErrorInternal, err.Error(), w, r)
 		}
@@ -131,6 +134,9 @@ func (c *GB28181Config) API_invite(w http.ResponseWriter, r *http.Request) {
 			util.ReturnError(util.APIErrorInternal, fmt.Sprintf("invite return code %d", code), w, r)
 		}
 	} else {
+		if code == 200 && err.Error() == "Duplicate Publish" {
+			util.ReturnError(util.APIStatusNotModified, "playback stream already exists", w, r)
+		}
 		util.ReturnError(util.APIErrorInternal, err.Error(), w, r)
 	}
 }
