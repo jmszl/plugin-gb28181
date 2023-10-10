@@ -12,7 +12,7 @@ require (
 	golang.org/x/net v0.15.0
 	golang.org/x/text v0.13.0
 	m7s.live/engine/v4 v4.13.12
-	m7s.live/plugin/ps/v4 v4.1.2
+	m7s.live/plugin/ps/v4 v4.1.3
 )
 
 require (
@@ -61,6 +61,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace m7s.live/engine/v4 => github.com/jmszl/engine/v4 v4.0.11
+replace m7s.live/engine/v4 => github.com/jmszl/engine/v4 v4.0.12
 
 //replace m7s.live/engine/v4 => D:\github.com\jmszl\engine
