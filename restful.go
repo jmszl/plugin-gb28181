@@ -26,6 +26,9 @@ func (c *GB28181Config) API_list(w http.ResponseWriter, r *http.Request) {
 			list = append(list, value.(*Device))
 			return true
 		})
+		sort.Slice(list, func(i, j int) bool {
+			return list[i].ID < list[j].ID
+		})
 		return
 	}, w, r)
 }
@@ -44,9 +47,10 @@ func (c *GB28181Config) API_records(w http.ResponseWriter, r *http.Request) {
 	if c := FindChannel(id, channel); c != nil {
 		res, err := c.QueryRecord(startTime, endTime)
 		if err == nil {
-			var rs Records = res
-			sort.Sort(rs)
-			util.ReturnValue(rs, w, r)
+			sort.Slice(res, func(i, j int) bool {
+				return res[i].StartTime < res[j].StartTime
+			})
+			util.ReturnValue(res, w, r)
 		} else {
 			util.ReturnError(util.APIErrorInternal, err.Error(), w, r)
 		}
