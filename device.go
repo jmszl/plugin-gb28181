@@ -403,6 +403,7 @@ func (d *Device) QueryDeviceInfo() {
 		request.AppendHeader(&contentType)
 		request.SetBody(BuildDeviceInfoXML(d.sn, d.ID), true)
 
+		GB28181Plugin.Sugar().Debugf("SIP->QueryDeviceInfo:%s", request)
 		response, _ := d.SipRequestForResponse(request)
 		if response != nil {
 			// via, _ := response.ViaHop()

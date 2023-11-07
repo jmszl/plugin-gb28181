@@ -126,10 +126,12 @@ func (c *GB28181Config) startServer() {
 		srvConf.Host = c.SipIP
 	}
 	srv = gosip.NewServer(srvConf, nil, nil, logger)
-	srv.OnRequest(sip.REGISTER, c.OnRegister)
-	srv.OnRequest(sip.MESSAGE, c.OnMessage)
-	srv.OnRequest(sip.NOTIFY, c.OnNotify)
-	srv.OnRequest(sip.BYE, c.OnBye)
+	_ = srv.OnRequest(sip.REGISTER, c.OnRegister)
+	_ = srv.OnRequest(sip.MESSAGE, c.OnMessage)
+	_ = srv.OnRequest(sip.NOTIFY, c.OnNotify)
+	_ = srv.OnRequest(sip.BYE, c.OnBye)
+	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.SipNetwork = "), c.SipNetwork))
+	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.MediaNetwork = "), c.MediaNetwork))
 	err := srv.Listen(strings.ToLower(c.SipNetwork), addr)
 	if err != nil {
 		GB28181Plugin.Logger.Error("gb28181 server listen", zap.Error(err))

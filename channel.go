@@ -420,6 +420,7 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 		HeaderName: "Subject", Contents: fmt.Sprintf("%s:%s,%s:0", channel.DeviceID, opt.ssrc, conf.Serial),
 	}
 	invite.AppendHeader(&subject)
+	GB28181Plugin.Sugar().Debugf("SIP->Invite:%s", invite)
 	inviteRes, err := d.SipRequestForResponse(invite)
 	if err != nil {
 		channel.Error("invite", zap.Error(err), zap.String("msg", invite.String()))
