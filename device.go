@@ -54,7 +54,6 @@ const (
 )
 
 type Device struct {
-	//*transaction.Core `json:"-" yaml:"-"`
 	ID              string
 	Name            string
 	Manufacturer    string
@@ -64,10 +63,10 @@ type Device struct {
 	UpdateTime      time.Time
 	LastKeepaliveAt time.Time
 	Status          DeviceStatus
-	sn              int
-	addr            sip.Address
-	sipIP           string //设备对应网卡的服务器ip
-	mediaIP         string //设备对应网卡的服务器ip
+	SN              int
+	Addr            sip.Address `json:"-" yaml:"-"`
+	SipIP           string      //设备对应网卡的服务器ip
+	MediaIP         string      //设备对应网卡的服务器ip
 	NetAddr         string
 	channelMap      sync.Map
 	subscriber      struct {
@@ -108,7 +107,7 @@ func (d *Device) MarshalJSON() ([]byte, error) {
 }
 func (c *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
 	from, _ := req.From()
-	d.addr = sip.Address{
+	d.Addr = sip.Address{
 		DisplayName: from.DisplayName,
 		Uri:         from.Address,
 	}
@@ -134,8 +133,8 @@ func (c *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
 	//}
 	d.Info("RecoverDevice", zap.String("deviceIp", deviceIp), zap.String("servIp", servIp), zap.String("sipIP", sipIP), zap.String("mediaIp", mediaIp))
 	d.Status = DeviceRegisterStatus
-	d.sipIP = sipIP
-	d.mediaIP = mediaIp
+	d.SipIP = sipIP
+	d.MediaIP = mediaIp
 	d.NetAddr = deviceIp
 	d.UpdateTime = time.Now()
 }
@@ -151,7 +150,7 @@ func (c *GB28181Config) StoreDevice(id string, req sip.Request) (d *Device) {
 		d = _d.(*Device)
 		d.UpdateTime = time.Now()
 		d.NetAddr = deviceIp
-		d.addr = deviceAddr
+		d.Addr = deviceAddr
 		d.Debug("UpdateDevice", zap.String("netaddr", d.NetAddr))
 	} else {
 		servIp := req.Recipient().Host()
@@ -178,9 +177,9 @@ func (c *GB28181Config) StoreDevice(id string, req sip.Request) (d *Device) {
 			RegisterTime: time.Now(),
 			UpdateTime:   time.Now(),
 			Status:       DeviceRegisterStatus,
-			addr:         deviceAddr,
-			sipIP:        sipIP,
-			mediaIP:      mediaIp,
+			Addr:         deviceAddr,
+			SipIP:        sipIP,
+			MediaIP:      mediaIp,
 			NetAddr:      deviceIp,
 			Logger:       GB28181Plugin.With(zap.String("id", id)),
 		}
@@ -225,11 +224,11 @@ func (d *Device) addOrUpdateChannel(info ChannelInfo) (c *Channel) {
 		c.ChannelInfo = info
 	} else {
 		c = &Channel{
-			device:      d,
+			Device:      d,
 			ChannelInfo: info,
 			Logger:      d.Logger.With(zap.String("channel", info.DeviceID)),
 		}
-		if s := engine.Streams.Get(fmt.Sprintf("%s/%s/rtsp", c.device.ID, c.DeviceID)); s != nil {
+		if s := engine.Streams.Get(fmt.Sprintf("%s/%s/rtsp", c.Device.ID, c.DeviceID)); s != nil {
 			c.LiveSubSP = s.Path
 		} else {
 			c.LiveSubSP = ""
@@ -245,7 +244,7 @@ func (d *Device) deleteChannel(DeviceID string) {
 
 func (d *Device) UpdateChannels(list ...ChannelInfo) {
 	for _, c := range list {
-		if _, ok := conf.Ignores[c.DeviceID]; ok {
+		if _, ok := conf.ignores[c.DeviceID]; ok {
 			continue
 		}
 		//当父设备非空且存在时、父设备节点增加通道
@@ -280,13 +279,13 @@ func (d *Device) UpdateChannels(list ...ChannelInfo) {
 }
 
 func (d *Device) CreateRequest(Method sip.RequestMethod) (req sip.Request) {
-	d.sn++
+	d.SN++
 
 	callId := sip.CallID(utils.RandNumString(10))
 	userAgent := sip.UserAgentHeader("Monibuca")
 	maxForwards := sip.MaxForwards(70) //增加max-forwards为默认值 70
 	cseq := sip.CSeq{
-		SeqNo:      uint32(d.sn),
+		SeqNo:      uint32(d.SN),
 		MethodName: Method,
 	}
 	port := sip.Port(conf.SipPort)
@@ -294,7 +293,7 @@ func (d *Device) CreateRequest(Method sip.RequestMethod) (req sip.Request) {
 		//DisplayName: sip.String{Str: d.config.Serial},
 		Uri: &sip.SipUri{
 			FUser: sip.String{Str: conf.Serial},
-			FHost: d.sipIP,
+			FHost: d.SipIP,
 			FPort: &port,
 		},
 		Params: sip.NewParams().Add("tag", sip.String{Str: utils.RandNumString(9)}),
@@ -302,11 +301,11 @@ func (d *Device) CreateRequest(Method sip.RequestMethod) (req sip.Request) {
 	req = sip.NewRequest(
 		"",
 		Method,
-		d.addr.Uri,
+		d.Addr.Uri,
 		"SIP/2.0",
 		[]sip.Header{
 			serverAddr.AsFromHeader(),
-			d.addr.AsToHeader(),
+			d.Addr.AsToHeader(),
 			&callId,
 			&userAgent,
 			&cseq,
@@ -357,7 +356,7 @@ func (d *Device) Subscribe() int {
 	request.AppendHeader(&contentType)
 	request.AppendHeader(&expires)
 
-	request.SetBody(BuildCatalogXML(d.sn, d.ID), true)
+	request.SetBody(BuildCatalogXML(d.SN, d.ID), true)
 
 	response, err := d.SipRequestForResponse(request)
 	if err == nil && response != nil {
@@ -381,7 +380,7 @@ func (d *Device) Catalog() int {
 
 	request.AppendHeader(&contentType)
 	request.AppendHeader(&expires)
-	request.SetBody(BuildCatalogXML(d.sn, d.ID), true)
+	request.SetBody(BuildCatalogXML(d.SN, d.ID), true)
 	// 输出Sip请求设备通道信息信令
 	GB28181Plugin.Sugar().Debugf("SIP->Catalog:%s", request)
 	resp, err := d.SipRequestForResponse(request)
@@ -401,7 +400,7 @@ func (d *Device) QueryDeviceInfo() {
 		request := d.CreateRequest(sip.MESSAGE)
 		contentType := sip.ContentType("Application/MANSCDP+xml")
 		request.AppendHeader(&contentType)
-		request.SetBody(BuildDeviceInfoXML(d.sn, d.ID), true)
+		request.SetBody(BuildDeviceInfoXML(d.SN, d.ID), true)
 
 		GB28181Plugin.Sugar().Debugf("SIP->QueryDeviceInfo:%s", request)
 		response, _ := d.SipRequestForResponse(request)
@@ -437,7 +436,7 @@ func (d *Device) MobilePositionSubscribe(id string, expires time.Duration, inter
 	mobilePosition.AppendHeader(&contentType)
 	mobilePosition.AppendHeader(&expiresHeader)
 
-	mobilePosition.SetBody(BuildDevicePositionXML(d.sn, id, int(interval/time.Second)), true)
+	mobilePosition.SetBody(BuildDevicePositionXML(d.SN, id, int(interval/time.Second)), true)
 
 	response, err := d.SipRequestForResponse(mobilePosition)
 	if err == nil && response != nil {
