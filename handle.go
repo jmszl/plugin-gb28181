@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/ghettovoice/gosip/sip"
 	"go.uber.org/zap"
@@ -207,7 +208,10 @@ func (c *GB28181Config) OnMessage(req sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 	id := from.Address.User().String()
-	GB28181Plugin.Debug("SIP<-OnMessage", zap.String("id", id), zap.String("source", req.Source()), zap.String("req", req.String()))
+
+	if !strings.Contains(req.String(), "<CmdType>Keepalive</CmdType>") {
+		GB28181Plugin.Debug("SIP<-OnMessage", zap.String("id", id), zap.String("source", req.Source()), zap.String("req", req.String()))
+	}
 	if v, ok := Devices.Load(id); ok {
 		d := v.(*Device)
 		switch d.Status {
