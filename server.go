@@ -16,7 +16,8 @@ import (
 	"m7s.live/plugin/gb28181/v4/utils"
 )
 
-var srv gosip.Server
+var srvUdp gosip.Server
+var srvTcp gosip.Server
 
 const MaxRegisterCount = 3
 
@@ -41,75 +42,79 @@ var levelMap = map[string]log.Level{
 }
 
 func GetSipServer(transport string) gosip.Server {
-	return srv
+	if strings.ToLower(transport) == "tcp" {
+		return srvTcp
+	} else {
+		return srvUdp
+	}
 }
 
 var sn = 0
 
-func CreateRequest(exposedId string, Method sip.RequestMethod, recipient *sip.Address, netAddr string) (req sip.Request) {
-
-	sn++
-
-	callId := sip.CallID(utils.RandNumString(10))
-	userAgent := sip.UserAgentHeader("Monibuca")
-	cseq := sip.CSeq{
-		SeqNo:      uint32(sn),
-		MethodName: Method,
-	}
-	port := sip.Port(conf.SipPort)
-	serverAddr := sip.Address{
-		//DisplayName: sip.String{Str: d.config.Serial},
-		Uri: &sip.SipUri{
-			FUser: sip.String{Str: exposedId},
-			FHost: conf.SipIP,
-			FPort: &port,
-		},
-		Params: sip.NewParams().Add("tag", sip.String{Str: utils.RandNumString(9)}),
-	}
-	req = sip.NewRequest(
-		"",
-		Method,
-		recipient.Uri,
-		"SIP/2.0",
-		[]sip.Header{
-			serverAddr.AsFromHeader(),
-			recipient.AsToHeader(),
-			&callId,
-			&userAgent,
-			&cseq,
-			serverAddr.AsContactHeader(),
-		},
-		"",
-		nil,
-	)
-
-	req.SetTransport(conf.SipNetwork)
-	req.SetDestination(netAddr)
-	//fmt.Printf("构建请求参数:%s", *&req)
-	// requestMsg.DestAdd, err2 = d.ResolveAddress(requestMsg)
-	// if err2 != nil {
-	// 	return nil
-	// }
-	//intranet ip , let's resolve it with public ip
-	// var deviceIp, deviceSourceIP net.IP
-	// switch addr := requestMsg.DestAdd.(type) {
-	// case *net.UDPAddr:
-	// 	deviceIp = addr.IP
-	// case *net.TCPAddr:
-	// 	deviceIp = addr.IP
-	// }
-
-	// switch addr2 := d.SourceAddr.(type) {
-	// case *net.UDPAddr:
-	// 	deviceSourceIP = addr2.IP
-	// case *net.TCPAddr:
-	// 	deviceSourceIP = addr2.IP
-	// }
-	// if deviceIp.IsPrivate() && !deviceSourceIP.IsPrivate() {
-	// 	requestMsg.DestAdd = d.SourceAddr
-	// }
-	return
-}
+// func CreateRequest(exposedId string, Method sip.RequestMethod, recipient *sip.Address, netAddr string) (req sip.Request) {
+//
+//		sn++
+//
+//		callId := sip.CallID(utils.RandNumString(10))
+//		userAgent := sip.UserAgentHeader("Monibuca")
+//		cseq := sip.CSeq{
+//			SeqNo:      uint32(sn),
+//			MethodName: Method,
+//		}
+//		port := sip.Port(conf.SipPort)
+//		serverAddr := sip.Address{
+//			//DisplayName: sip.String{Str: d.config.Serial},
+//			Uri: &sip.SipUri{
+//				FUser: sip.String{Str: exposedId},
+//				FHost: conf.SipIP,
+//				FPort: &port,
+//			},
+//			Params: sip.NewParams().Add("tag", sip.String{Str: utils.RandNumString(9)}),
+//		}
+//		req = sip.NewRequest(
+//			"",
+//			Method,
+//			recipient.Uri,
+//			"SIP/2.0",
+//			[]sip.Header{
+//				serverAddr.AsFromHeader(),
+//				recipient.AsToHeader(),
+//				&callId,
+//				&userAgent,
+//				&cseq,
+//				serverAddr.AsContactHeader(),
+//			},
+//			"",
+//			nil,
+//		)
+//
+//		req.SetTransport(conf.SipNetwork)
+//		req.SetDestination(netAddr)
+//		//fmt.Printf("构建请求参数:%s", *&req)
+//		// requestMsg.DestAdd, err2 = d.ResolveAddress(requestMsg)
+//		// if err2 != nil {
+//		// 	return nil
+//		// }
+//		//intranet ip , let's resolve it with public ip
+//		// var deviceIp, deviceSourceIP net.IP
+//		// switch addr := requestMsg.DestAdd.(type) {
+//		// case *net.UDPAddr:
+//		// 	deviceIp = addr.IP
+//		// case *net.TCPAddr:
+//		// 	deviceIp = addr.IP
+//		// }
+//
+//		// switch addr2 := d.SourceAddr.(type) {
+//		// case *net.UDPAddr:
+//		// 	deviceSourceIP = addr2.IP
+//		// case *net.TCPAddr:
+//		// 	deviceSourceIP = addr2.IP
+//		// }
+//		// if deviceIp.IsPrivate() && !deviceSourceIP.IsPrivate() {
+//		// 	requestMsg.DestAdd = d.SourceAddr
+//		// }
+//		return
+//	}
 func RequestForResponse(transport string, request sip.Request,
 	options ...gosip.RequestWithContextOption) (sip.Response, error) {
 	return (GetSipServer(transport)).RequestWithContext(context.Background(), request, options...)
@@ -125,14 +130,14 @@ func (c *GB28181Config) startServer() {
 	if c.SipIP != "" {
 		srvConf.Host = c.SipIP
 	}
-	srv = gosip.NewServer(srvConf, nil, nil, logger)
-	_ = srv.OnRequest(sip.REGISTER, c.OnRegister)
-	_ = srv.OnRequest(sip.MESSAGE, c.OnMessage)
-	_ = srv.OnRequest(sip.NOTIFY, c.OnNotify)
-	_ = srv.OnRequest(sip.BYE, c.OnBye)
-	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.SipNetwork = "), c.SipNetwork))
+	srvUdp = gosip.NewServer(srvConf, nil, nil, logger)
+	_ = srvUdp.OnRequest(sip.REGISTER, c.OnRegister)
+	_ = srvUdp.OnRequest(sip.MESSAGE, c.OnMessage)
+	_ = srvUdp.OnRequest(sip.NOTIFY, c.OnNotify)
+	_ = srvUdp.OnRequest(sip.BYE, c.OnBye)
+	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.SipNetwork = "), "UDP"))
 	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.MediaNetwork = "), c.MediaNetwork))
-	err := srv.Listen(strings.ToLower(c.SipNetwork), addr)
+	err := srvUdp.Listen("udp", addr)
 	if err != nil {
 		GB28181Plugin.Logger.Error("gb28181 server listen", zap.Error(err))
 	} else {
@@ -145,6 +150,31 @@ func (c *GB28181Config) startServer() {
 		c.udpPorts.Init(c.MediaPortMin, c.MediaPortMax)
 	}
 	go c.startJob()
+}
+
+func (c *GB28181Config) startServerTCP() {
+	addr := c.ListenAddr + ":" + strconv.Itoa(int(c.SipPort))
+
+	logger := utils.NewZapLogger(GB28181Plugin.Logger, "GB SIP Server TCP", nil)
+	logger.SetLevel(uint32(levelMap[EngineConfig.LogLevel]))
+	// logger := log.NewDefaultLogrusLogger().WithPrefix("GB SIP Server")
+	srvConf := gosip.ServerConfig{}
+	if c.SipIP != "" {
+		srvConf.Host = c.SipIP
+	}
+	srvTcp = gosip.NewServer(srvConf, nil, nil, logger)
+	_ = srvTcp.OnRequest(sip.REGISTER, c.OnRegister)
+	_ = srvTcp.OnRequest(sip.MESSAGE, c.OnMessage)
+	_ = srvTcp.OnRequest(sip.NOTIFY, c.OnNotify)
+	_ = srvTcp.OnRequest(sip.BYE, c.OnBye)
+	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.SipNetwork = "), "TCP"))
+	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.MediaNetwork = "), c.MediaNetwork))
+	err := srvTcp.Listen("tcp", addr)
+	if err != nil {
+		GB28181Plugin.Logger.Error("gb28181 server listen", zap.Error(err))
+	} else {
+		GB28181Plugin.Info(fmt.Sprint(aurora.Green("Server gb28181 start at"), aurora.BrightBlue(addr)))
+	}
 }
 
 // func queryCatalog(config *transaction.Config) {

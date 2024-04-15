@@ -115,19 +115,24 @@ func (c *GB28181Config) OnRegister(req sip.Request, tx sip.ServerTransaction) {
 				username = c.Username
 			}
 
-			if dc, ok := DeviceRegisterCount.LoadOrStore(id, 1); ok && dc.(int) > MaxRegisterCount {
-				response := sip.NewResponseFromRequest("", req, http.StatusForbidden, "Forbidden", "")
-				tx.Respond(response)
-				return
-			} else {
-				// 设备第二次上报，校验
-				_nonce, loaded := DeviceNonce.Load(id)
-				if loaded && auth.Verify(username, c.Password, c.Realm, _nonce.(string)) {
-					passAuth = true
-				} else {
-					DeviceRegisterCount.Store(id, dc.(int)+1)
-				}
+			// 设备第二次上报，校验
+			_nonce, loaded := DeviceNonce.Load(id)
+			if loaded && auth.Verify(username, c.Password, c.Realm, _nonce.(string)) {
+				passAuth = true
 			}
+
+			//if dc, ok := DeviceRegisterCount.LoadOrStore(id, 1); ok && dc.(int) > MaxRegisterCount {
+			//	response := sip.NewResponseFromRequest("", req, http.StatusForbidden, "Forbidden", "")
+			//	tx.Respond(response)
+			//	return
+			//} else {
+			// 设备第二次上报，校验
+			//_nonce, loaded := DeviceNonce.Load(id)
+			//if loaded && auth.Verify(username, c.Password, c.Realm, _nonce.(string)) {
+			//	passAuth = true
+			//} else {
+			//	DeviceRegisterCount.Store(id, dc.(int)+1)
+			//}
 		}
 	}
 	if passAuth {
@@ -209,8 +214,8 @@ func (c *GB28181Config) OnMessage(req sip.Request, tx sip.ServerTransaction) {
 	}
 	id := from.Address.User().String()
 
-	if !strings.Contains(req.String(), "<CmdType>Keepalive</CmdType>") {
-		GB28181Plugin.Debug("SIP<-OnMessage", zap.String("id", id), zap.String("source", req.Source()), zap.String("req", req.String()))
+	if !(strings.Contains(req.String(), "<CmdType>Keepalive</CmdType>") || strings.Contains(req.String(), "<CmdType>Alarm</CmdType>")) {
+		GB28181Plugin.Trace("SIP<-OnMessage", zap.String("id", id), zap.String("source", req.Source()), zap.String("req", req.String()))
 	}
 	if v, ok := Devices.Load(id); ok {
 		d := v.(*Device)

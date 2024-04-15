@@ -225,7 +225,7 @@ func (channel *Channel) CreateRequst(Method sip.RequestMethod) (req sip.Request)
 		nil,
 	)
 
-	req.SetTransport(conf.SipNetwork)
+	req.SetTransport(d.SipNetwork)
 	req.SetDestination(d.NetAddr)
 	return req
 }
@@ -471,7 +471,7 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 				channel:   channel,
 				inviteRes: inviteRes,
 			})
-			err = srv.Send(sip.NewAckRequest("", invite, inviteRes, "", nil))
+			err = GetSipServer(d.SipNetwork).Send(sip.NewAckRequest("", invite, inviteRes, "", nil))
 		}
 	}
 	return

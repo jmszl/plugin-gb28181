@@ -78,6 +78,7 @@ type Device struct {
 	Longitude    string    //经度
 	Latitude     string    //纬度
 	*log.Logger  `json:"-" yaml:"-"`
+	SipNetwork   string
 }
 
 func (d *Device) GetChannels() []*Channel {
@@ -137,6 +138,7 @@ func (c *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
 	d.MediaIP = mediaIp
 	d.NetAddr = deviceIp
 	d.UpdateTime = time.Now()
+	d.SipNetwork = req.Transport()
 }
 
 func (c *GB28181Config) StoreDevice(id string, req sip.Request) (d *Device) {
@@ -182,6 +184,7 @@ func (c *GB28181Config) StoreDevice(id string, req sip.Request) (d *Device) {
 			MediaIP:      mediaIp,
 			NetAddr:      deviceIp,
 			Logger:       GB28181Plugin.With(zap.String("id", id)),
+			SipNetwork:   req.Transport(),
 		}
 		d.Info("StoreDevice", zap.String("deviceIp", deviceIp), zap.String("servIp", servIp), zap.String("sipIP", sipIP), zap.String("mediaIp", mediaIp))
 		Devices.Store(id, d)
@@ -316,7 +319,7 @@ func (d *Device) CreateRequest(Method sip.RequestMethod) (req sip.Request) {
 		nil,
 	)
 
-	req.SetTransport(conf.SipNetwork)
+	req.SetTransport(d.SipNetwork)
 	req.SetDestination(d.NetAddr)
 	//fmt.Printf("构建请求参数:%s", *&req)
 	// requestMsg.DestAdd, err2 = d.ResolveAddress(requestMsg)
@@ -420,7 +423,7 @@ func (d *Device) QueryDeviceInfo() {
 }
 
 func (d *Device) SipRequestForResponse(request sip.Request) (sip.Response, error) {
-	return srv.RequestWithContext(context.Background(), request)
+	return GetSipServer(d.SipNetwork).RequestWithContext(context.Background(), request)
 }
 
 // MobilePositionSubscribe 移动位置订阅
