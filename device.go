@@ -291,7 +291,7 @@ func (d *Device) CreateRequest(Method sip.RequestMethod) (req sip.Request) {
 		SeqNo:      uint32(d.SN),
 		MethodName: Method,
 	}
-	port := sip.Port(conf.SipPort)
+	port := conf.SipPort
 	serverAddr := sip.Address{
 		//DisplayName: sip.String{Str: d.config.Serial},
 		Uri: &sip.SipUri{

@@ -181,7 +181,7 @@ func (channel *Channel) CreateRequst(Method sip.RequestMethod) (req sip.Request)
 		SeqNo:      uint32(d.SN),
 		MethodName: Method,
 	}
-	port := sip.Port(conf.SipPort)
+	port := conf.SipPort
 	serverAddr := sip.Address{
 		//DisplayName: sip.String{Str: d.serverConfig.Serial},
 		Uri: &sip.SipUri{
@@ -375,24 +375,25 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 	if conf.IsMediaNetworkTCP() {
 		networkType = "tcp"
 		protocol = "TCP/"
-		if conf.tcpPorts.Valid {
-			opt.MediaPort, err = conf.tcpPorts.GetPort()
-			opt.recyclePort = conf.tcpPorts.Recycle
-			reusePort = false
-		}
-	} else {
-		if conf.udpPorts.Valid {
-			opt.MediaPort, err = conf.udpPorts.GetPort()
-			opt.recyclePort = conf.udpPorts.Recycle
-			reusePort = false
-		}
 	}
+	//if conf.tcpPorts.Valid {
+	//	opt.MediaPort, err = conf.tcpPorts.GetPort()
+	//	opt.recyclePort = conf.tcpPorts.Recycle
+	//	reusePort = false
+	//}
+	//} else {
+	//	if conf.udpPorts.Valid {
+	//		opt.MediaPort, err = conf.udpPorts.GetPort()
+	//		opt.recyclePort = conf.udpPorts.Recycle
+	//		reusePort = false
+	//	}
+	//}
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if opt.MediaPort == 0 {
-		opt.MediaPort = conf.MediaPort
-	}
+	//if opt.MediaPort == 0 {
+	//	opt.MediaPort = conf.MediaPort
+	//}
 
 	sdpInfo := []string{
 		"v=0",
@@ -401,7 +402,7 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 		"u=" + channel.DeviceID + ":0",
 		"c=IN IP4 " + d.MediaIP,
 		opt.String(),
-		fmt.Sprintf("m=video %d %sRTP/AVP 96 97 98 99", opt.MediaPort, protocol),
+		fmt.Sprintf("m=video %d %sRTP/AVP 96 97 98 99", conf.MediaPort, protocol),
 		"a=recvonly",
 		"a=rtpmap:96 PS/90000",
 		"a=rtpmap:97 MPEG4/90000",
