@@ -120,32 +120,32 @@ type Channel struct {
 	ChannelInfo
 }
 
-func (c *Channel) MarshalJSON() ([]byte, error) {
+func (channel *Channel) MarshalJSON() ([]byte, error) {
 	m := map[string]any{
-		"DeviceID":     c.DeviceID,
-		"ParentID":     c.ParentID,
-		"Name":         c.Name,
-		"Manufacturer": c.Manufacturer,
-		"Model":        c.Model,
-		"Owner":        c.Owner,
-		"CivilCode":    c.CivilCode,
-		"Address":      c.Address,
-		"Port":         c.Port,
-		"Parental":     c.Parental,
-		"SafetyWay":    c.SafetyWay,
-		"RegisterWay":  c.RegisterWay,
-		"Secrecy":      c.Secrecy,
-		"Status":       c.Status,
-		"Longitude":    c.Longitude,
-		"Latitude":     c.Latitude,
-		"GpsTime":      c.GpsTime,
-		"LiveSubSP":    c.LiveSubSP,
-		"LiveStatus":   c.State.Load(),
+		"DeviceID":     channel.DeviceID,
+		"ParentID":     channel.ParentID,
+		"Name":         channel.Name,
+		"Manufacturer": channel.Manufacturer,
+		"Model":        channel.Model,
+		"Owner":        channel.Owner,
+		"CivilCode":    channel.CivilCode,
+		"Address":      channel.Address,
+		"Port":         channel.Port,
+		"Parental":     channel.Parental,
+		"SafetyWay":    channel.SafetyWay,
+		"RegisterWay":  channel.RegisterWay,
+		"Secrecy":      channel.Secrecy,
+		"Status":       channel.Status,
+		"Longitude":    channel.Longitude,
+		"Latitude":     channel.Latitude,
+		"GpsTime":      channel.GpsTime,
+		"LiveSubSP":    channel.LiveSubSP,
+		"LiveStatus":   channel.State.Load(),
 	}
 	return json.Marshal(m)
 }
 
-// Channel 通道
+// ChannelInfo 通道
 type ChannelInfo struct {
 	DeviceID     string // 通道ID
 	ParentID     string
@@ -391,9 +391,9 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	//if opt.MediaPort == 0 {
-	//	opt.MediaPort = conf.MediaPort
-	//}
+	if opt.MediaPort == 0 {
+		opt.MediaPort = conf.MediaPort
+	}
 
 	sdpInfo := []string{
 		"v=0",

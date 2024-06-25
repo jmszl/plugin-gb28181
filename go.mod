@@ -5,10 +5,9 @@ go 1.21
 toolchain go1.21.3
 
 require (
-	github.com/ghettovoice/gosip v0.0.0-20231227123312-6b80e2d3e6f7
+	github.com/ghettovoice/gosip v0.0.0-20240619135023-afc3f006312f
 	github.com/goccy/go-json v0.10.2
 	github.com/husanpao/ip v0.0.0-20220711082147-73160bb611a8
-	github.com/logrusorgru/aurora/v4 v4.0.0
 	github.com/pion/rtp v1.8.3
 	go.uber.org/zap v1.26.0
 	golang.org/x/net v0.20.0
@@ -20,7 +19,7 @@ require (
 require (
 	github.com/bluenviron/gortsplib/v4 v4.6.2 // indirect
 	github.com/bluenviron/mediacommon v1.9.1 // indirect
-	github.com/cnotch/ipchub v1.1.0 // indirect
+	github.com/deepch/vdk v0.0.27 // indirect
 	github.com/discoviking/fsm v0.0.0-20150126104936-f4a273feecca // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -64,6 +63,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace m7s.live/engine/v4 => github.com/jmszl/engine/v4 v4.0.22
+replace m7s.live/engine/v4 => github.com/jmszl/engine/v4 v4.0.24
 
 //replace m7s.live/engine/v4 => D:\github.com\jmszl\engine

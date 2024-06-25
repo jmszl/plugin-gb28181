@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -104,8 +105,12 @@ func (d *Device) MarshalJSON() ([]byte, error) {
 		data.Channels = append(data.Channels, value.(*Channel))
 		return true
 	})
+	sort.Slice(data.Channels, func(i, j int) bool {
+		return data.Channels[i].DeviceID < data.Channels[j].DeviceID
+	})
 	return json.Marshal(data)
 }
+
 func (c *GB28181Config) RecoverDevice(d *Device, req sip.Request) {
 	from, _ := req.From()
 	d.Addr = sip.Address{

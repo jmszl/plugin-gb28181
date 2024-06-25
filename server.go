@@ -10,7 +10,6 @@ import (
 	"github.com/ghettovoice/gosip"
 	"github.com/ghettovoice/gosip/log"
 	"github.com/ghettovoice/gosip/sip"
-	"github.com/logrusorgru/aurora/v4"
 	"go.uber.org/zap"
 	. "m7s.live/engine/v4"
 	"m7s.live/plugin/gb28181/v4/utils"
@@ -135,13 +134,13 @@ func (c *GB28181Config) startServer() {
 	_ = srvUdp.OnRequest(sip.MESSAGE, c.OnMessage)
 	_ = srvUdp.OnRequest(sip.NOTIFY, c.OnNotify)
 	_ = srvUdp.OnRequest(sip.BYE, c.OnBye)
-	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.SipNetwork = "), "UDP"))
-	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.MediaNetwork = "), c.MediaNetwork))
+	GB28181Plugin.Info(fmt.Sprint("c.SipNetwork = ", "UDP"))
+	GB28181Plugin.Info(fmt.Sprint("c.MediaNetwork = ", c.MediaNetwork))
 	err := srvUdp.Listen("udp", addr)
 	if err != nil {
 		GB28181Plugin.Logger.Error("gb28181 server listen", zap.Error(err))
 	} else {
-		GB28181Plugin.Info(fmt.Sprint(aurora.Green("Server gb28181 start at"), aurora.BrightBlue(addr)))
+		GB28181Plugin.Info(fmt.Sprint("Server gb28181 start at", addr))
 	}
 
 	if c.MediaNetwork == "tcp" {
@@ -153,6 +152,7 @@ func (c *GB28181Config) startServer() {
 }
 
 func (c *GB28181Config) startServerTCP() {
+
 	addr := c.ListenAddr + ":" + strconv.Itoa(int(c.SipPort))
 
 	logger := utils.NewZapLogger(GB28181Plugin.Logger, "GB SIP Server TCP", nil)
@@ -167,13 +167,13 @@ func (c *GB28181Config) startServerTCP() {
 	_ = srvTcp.OnRequest(sip.MESSAGE, c.OnMessage)
 	_ = srvTcp.OnRequest(sip.NOTIFY, c.OnNotify)
 	_ = srvTcp.OnRequest(sip.BYE, c.OnBye)
-	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.SipNetwork = "), "TCP"))
-	GB28181Plugin.Info(fmt.Sprint(aurora.Green("c.MediaNetwork = "), c.MediaNetwork))
+	GB28181Plugin.Info(fmt.Sprint("c.SipNetwork = ", "TCP"))
+	GB28181Plugin.Info(fmt.Sprint("c.MediaNetwork = ", c.MediaNetwork))
 	err := srvTcp.Listen("tcp", addr)
 	if err != nil {
 		GB28181Plugin.Logger.Error("gb28181 server listen", zap.Error(err))
 	} else {
-		GB28181Plugin.Info(fmt.Sprint(aurora.Green("Server gb28181 start at"), aurora.BrightBlue(addr)))
+		GB28181Plugin.Info(fmt.Sprint("Server gb28181 start at", addr))
 	}
 }
 
