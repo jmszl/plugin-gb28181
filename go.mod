@@ -1,12 +1,11 @@
 module m7s.live/plugin/gb28181/v4
 
-go 1.19
+go 1.23
 
 require (
 	github.com/ghettovoice/gosip v0.0.0-20231227123312-6b80e2d3e6f7
 	github.com/goccy/go-json v0.10.2
 	github.com/husanpao/ip v0.0.0-20220711082147-73160bb611a8
-	github.com/logrusorgru/aurora/v4 v4.0.0
 	github.com/pion/rtp v1.8.3
 	go.uber.org/zap v1.26.0
 	golang.org/x/net v0.19.0
@@ -30,6 +29,7 @@ require (
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/google/pprof v0.0.0-20230912144702-c363fe2c2ed8 // indirect
 	github.com/google/uuid v1.4.0 // indirect
+	github.com/logrusorgru/aurora/v4 v4.0.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
