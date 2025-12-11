@@ -1,6 +1,7 @@
 package gb28181
 
 import (
+	"m7s.live/engine/v4/log"
 	"os"
 	"strings"
 	"sync"
@@ -108,6 +109,7 @@ func (c *GB28181Config) OnEvent(event any) {
 		c.startServer()
 		c.startServerTCP()
 	case InvitePublish:
+		log.Info("InvitePublish", zap.String("path", e.Target))
 		if c.InviteMode == INVIDE_MODE_ONSUBSCRIBE {
 			//流可能是回放流，stream path是device/channel/start-end形式
 			streamNames := strings.Split(e.Target, "/")
@@ -127,10 +129,12 @@ func (c *GB28181Config) OnEvent(event any) {
 			}
 		}
 	case SEpublish:
+		log.Info("SEpublish", zap.String("path", e.Target.Path))
 		if channel := FindChannel(e.Target.AppName, strings.TrimSuffix(e.Target.StreamName, "/rtsp")); channel != nil {
 			channel.LiveSubSP = e.Target.Path
 		}
 	case SEclose:
+		log.Info("SEclose", zap.String("path", e.Target.Path))
 		if channel := FindChannel(e.Target.AppName, strings.TrimSuffix(e.Target.StreamName, "/rtsp")); channel != nil {
 			channel.LiveSubSP = ""
 		}

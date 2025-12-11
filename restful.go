@@ -33,6 +33,22 @@ func (c *GB28181Config) API_list(w http.ResponseWriter, r *http.Request) {
 	}, w, r)
 }
 
+func (c *GB28181Config) API_catalog(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	id := query.Get("id")
+	if v, ok := Devices.Load(id); ok {
+		d := v.(*Device)
+		catalog := d.Catalog()
+		if catalog == 200 {
+			util.ReturnOK(w, r)
+		} else {
+			util.ReturnError(catalog, fmt.Sprintf("device %q err: %d", id, catalog), w, r)
+		}
+	} else {
+		util.ReturnError(util.APIErrorNotFound, fmt.Sprintf("device %q not found", id), w, r)
+	}
+}
+
 func (c *GB28181Config) API_records(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	id := query.Get("id")
