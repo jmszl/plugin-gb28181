@@ -363,6 +363,11 @@ func (d *Device) Subscribe() int {
 	contentType := sip.ContentType("Application/MANSCDP+xml")
 	request.AppendHeader(&contentType)
 	request.AppendHeader(&expires)
+	// 目录订阅必须携带Event头，否则设备不会通过NOTIFY推送目录
+	request.AppendHeader(&sip.GenericHeader{
+		HeaderName: "Event",
+		Contents:   "Catalog",
+	})
 
 	request.SetBody(BuildCatalogXML(d.SN, d.ID), true)
 

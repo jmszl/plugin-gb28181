@@ -310,7 +310,7 @@ func (channel *Channel) Control(PTZCmd string) int {
 	request := d.CreateRequest(sip.MESSAGE)
 	contentType := sip.ContentType("Application/MANSCDP+xml")
 	request.AppendHeader(&contentType)
-	body := fmt.Sprintf(`<?xml version="1.0"?>
+	body := fmt.Sprintf(`<?xml version="1.0" encoding="GB2312"?>
 		<Control>
 		<CmdType>DeviceControl</CmdType>
 		<SN>%d</SN>
@@ -450,7 +450,6 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 		"a=rtpmap:97 MPEG4/90000",
 		"a=rtpmap:98 H264/90000",
 		"a=rtpmap:99 H265/90000",
-		"y=" + opt.ssrc,
 	}
 	if conf.IsMediaNetworkTCP() {
 		sdpInfo = append(sdpInfo, "a=setup:passive", "a=connection:new")

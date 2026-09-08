@@ -9,50 +9,20 @@ import (
 
 var (
 	// 获取预置位列表
-	PresentListXML = `
-<?xml version="1.0"?>
-<Query>
-	<CmdType>PresetQuery</CmdType>
-		<SN>%d</SN>
-	<DeviceID>%s</DeviceID>
-</Query>
+	PresentListXML = `<?xml version="1.0" encoding="GB2312" standalone="yes" ?><Query><CmdType>PresetQuery</CmdType><SN>%d</SN><DeviceID>%s</DeviceID></Query>
 `
 
 	// CatalogXML 获取设备列表xml样式
-	CatalogXML = `<?xml version="1.0"?><Query>
-<CmdType>Catalog</CmdType>
-<SN>%d</SN>
-<DeviceID>%s</DeviceID>
-</Query>
+	CatalogXML = `<?xml version="1.0" encoding="GB2312" standalone="yes" ?><Query><CmdType>Catalog</CmdType><SN>%d</SN><DeviceID>%s</DeviceID></Query>
 `
 	// RecordInfoXML 获取录像文件列表xml样式
-	RecordInfoXML = `<?xml version="1.0"?>
-<Query>
-<CmdType>RecordInfo</CmdType>
-<SN>%d</SN>
-<DeviceID>%s</DeviceID>
-<StartTime>%s</StartTime>
-<EndTime>%s</EndTime>
-<Secrecy>0</Secrecy>
-<Type>all</Type>
-</Query>
+	RecordInfoXML = `<?xml version="1.0" encoding="GB2312" standalone="yes" ?><Query><CmdType>RecordInfo</CmdType><SN>%d</SN><DeviceID>%s</DeviceID><StartTime>%s</StartTime><EndTime>%s</EndTime><Secrecy>0</Secrecy><Type>all</Type></Query>
 `
 	// DeviceInfoXML 查询设备详情xml样式
-	DeviceInfoXML = `<?xml version="1.0"?>
-<Query>
-<CmdType>DeviceInfo</CmdType>
-<SN>%d</SN>
-<DeviceID>%s</DeviceID>
-</Query>
+	DeviceInfoXML = `<?xml version="1.0" encoding="GB2312" standalone="yes" ?><Query><CmdType>DeviceInfo</CmdType><SN>%d</SN><DeviceID>%s</DeviceID></Query>
 `
 	// DevicePositionXML 订阅设备位置
-	DevicePositionXML = `<?xml version="1.0"?>
-<Query>
-<CmdType>MobilePosition</CmdType>
-<SN>%d</SN>
-<DeviceID>%s</DeviceID>
-<Interval>%d</Interval>
-</Query>`
+	DevicePositionXML = `<?xml version="1.0" encoding="GB2312" standalone="yes" ?><Query><CmdType>MobilePosition</CmdType><SN>%d</SN><DeviceID>%s</DeviceID><Interval>%d</Interval></Query>`
 )
 
 func intTotime(t int64) time.Time {
@@ -92,12 +62,7 @@ func BuildDevicePositionXML(sn int, id string, interval int) string {
 
 // AlarmResponseXML alarm response xml样式
 var (
-	AlarmResponseXML = `<?xml version="1.0"?>
-<Response>
-<CmdType>Alarm</CmdType>
-<SN>17430</SN>
-<DeviceID>%s</DeviceID>
-</Response>
+	AlarmResponseXML = `<?xml version="1.0" encoding="GB2312" standalone="yes" ?><Response><CmdType>Alarm</CmdType><SN>17430</SN><DeviceID>%s</DeviceID></Response>
 `
 )
 

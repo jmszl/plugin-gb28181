@@ -18,7 +18,6 @@ require (
 	github.com/bluenviron/gortsplib/v4 v4.6.2 // indirect
 	github.com/bluenviron/mediacommon v1.5.1 // indirect
 	github.com/deepch/vdk v0.0.27 // indirect
-	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/discoviking/fsm v0.0.0-20150126104936-f4a273feecca // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -28,8 +27,6 @@ require (
 	github.com/gobwas/ws v1.3.1 // indirect
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/google/pprof v0.0.0-20230912144702-c363fe2c2ed8 // indirect
-	github.com/google/uuid v1.4.0 // indirect
-	github.com/logrusorgru/aurora/v4 v4.0.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
@@ -64,3 +61,5 @@ require (
 	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace m7s.live/engine/v4 => github.com/jmszl/engine/v4 v4.0.29
