@@ -451,6 +451,11 @@ func (channel *Channel) Invite(opt *InviteOptions) (code int, err error) {
 		"a=rtpmap:98 H264/90000",
 		"a=rtpmap:99 H265/90000",
 	}
+
+	if opt.IsLive() {
+		sdpInfo = append(sdpInfo, "a=streamprofile:1")
+	}
+
 	if conf.IsMediaNetworkTCP() {
 		sdpInfo = append(sdpInfo, "a=setup:passive", "a=connection:new")
 	}
