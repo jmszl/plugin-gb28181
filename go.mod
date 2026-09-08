@@ -62,4 +62,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace m7s.live/engine/v4 => github.com/jmszl/engine/v4 v4.0.29
+replace (
+	m7s.live/engine/v4 => github.com/jmszl/engine/v4 v4.0.29
+	m7s.live/plugin/ps/v4 => github.com/jmszl/plugin-ps/v4 v4.0.1
+)
